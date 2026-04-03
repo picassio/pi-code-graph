@@ -57,6 +57,7 @@ const CYPHER_FIND_CALLERS = `
 MATCH (caller)-[:CALLS]->(target)
 WHERE target.qualified_name = $qualified_name
   OR target.name = $name
+  OR target.qualified_name STARTS WITH ($qualified_name + '.')
 OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(caller)
 RETURN DISTINCT
   caller.qualified_name AS caller_qn,
@@ -73,6 +74,7 @@ const CYPHER_FIND_CALLEES = `
 MATCH (source)-[:CALLS]->(callee)
 WHERE source.qualified_name = $qualified_name
   OR source.name = $name
+  OR source.qualified_name STARTS WITH ($qualified_name + '.')
 OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(callee)
 RETURN DISTINCT
   callee.qualified_name AS callee_qn,
@@ -88,6 +90,7 @@ LIMIT $limit
 const CYPHER_FIND_NODE_BY_NAME = `
 MATCH (n)
 WHERE n.qualified_name = $qualified_name
+  OR n.qualified_name ENDS WITH ('.' + $name)
   OR (n.name = $name AND (n:Function OR n:Method OR n:Class))
 OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(n)
 RETURN
