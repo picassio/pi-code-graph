@@ -11,6 +11,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { basename } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
 
 import { getServiceManager, checkMemgraphConnectivity } from "./services.js";
 import { getSettings, updateSettings, saveSettingsToFile, getConfigFilePath, type CGRSettings } from "./settings.js";
@@ -24,6 +25,7 @@ import {
 	getMemgraphLogs,
 	getDockerComposePath,
 } from "./docker.js";
+import { getLogFilePath } from "./lib/logger.js";
 
 
 /**
@@ -50,6 +52,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 				{ value: "query", label: "query", description: "Query the code graph" },
 				{ value: "index", label: "index", description: "Index/update repository" },
 				{ value: "docker", label: "docker", description: "Manage Memgraph Docker container" },
+				{ value: "logs", label: "logs", description: "Show extension log file" },
 				{ value: "help", label: "help", description: "Show help" },
 			];
 			return subs.filter(s => s.value.startsWith(prefix));
@@ -124,6 +127,12 @@ export function registerCommands(pi: ExtensionAPI): void {
 				case "docker":
 				case "d":
 					await handleDocker(ctx, subargs);
+					break;
+
+				case "logs":
+				case "log":
+				case "l":
+					await handleLogs(ctx, subargs);
 					break;
 
 				case "help":
@@ -688,6 +697,33 @@ async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> 
 }
 
 /**
+ * /cgs logs - Show extension log file
+ */
+async function handleLogs(ctx: ExtensionContext, args: string): Promise<void> {
+	const logPath = getLogFilePath();
+
+	if (!existsSync(logPath)) {
+		ctx.ui.notify(`No log file found at: ${logPath}`, "info");
+		return;
+	}
+
+	const lines = parseInt(args, 10) || 50;
+
+	try {
+		const content = readFileSync(logPath, "utf-8");
+		const allLines = content.split("\n");
+		const tail = allLines.slice(-lines).join("\n");
+
+		ctx.ui.notify(
+			`Log file: ${logPath} (last ${lines} lines)\n\n${tail}`,
+			"info",
+		);
+	} catch (err) {
+		ctx.ui.notify(`Failed to read log: ${err}`, "error");
+	}
+}
+
+/**
  * /cgs help - Show help
  */
 async function handleHelp(ctx: ExtensionContext): Promise<void> {
@@ -703,8 +739,10 @@ async function handleHelp(ctx: ExtensionContext): Promise<void> {
 		"/cgs query (q)    Query the code graph",
 		"/cgs index (i)    Index/update repository",
 		"/cgs docker (d)   Manage Memgraph container",
+		"/cgs logs (l)     Show extension log",
 		"",
 		`Config: ${getConfigFilePath()}`,
+		`Log:    ${getLogFilePath()}`,
 	].join("\n");
 
 	ctx.ui.notify(helpText, "info");

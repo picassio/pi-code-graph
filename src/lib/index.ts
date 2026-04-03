@@ -4,7 +4,7 @@
  */
 
 // Export logger
-export { logger, setLogLevel, getLogLevel, type LogLevel } from './logger.js';
+export { logger, setLogLevel, getLogLevel, getLogFilePath, type LogLevel } from './logger.js';
 
 // Export all types
 export * from './types.js';
