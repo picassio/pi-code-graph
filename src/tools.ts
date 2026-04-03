@@ -496,6 +496,11 @@ export function registerIndexingTools(pi: ExtensionAPI): void {
 					description: "Custom project name (default: directory name)",
 				}),
 			),
+			project_root: Type.Optional(
+				Type.String({
+					description: "Path to project root directory (default: current working directory)",
+				}),
+			),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -516,7 +521,8 @@ export function registerIndexingTools(pi: ExtensionAPI): void {
 
 			await ensureServices(ctx);
 			const manager = getServiceManager();
-			const projectName = params.project_name || settings.projectName || basename(ctx.cwd);
+			const projectRoot = params.project_root || ctx.cwd;
+			const projectName = params.project_name || basename(projectRoot);
 
 			onUpdate?.({
 				content: [{ type: "text", text: `Indexing repository as "${projectName}"...` }],
@@ -525,7 +531,7 @@ export function registerIndexingTools(pi: ExtensionAPI): void {
 
 			try {
 				// Update project context
-				await manager.updateProjectContext(ctx.cwd, projectName);
+				await manager.updateProjectContext(projectRoot, projectName, ctx);
 				
 				// Create graph updater
 				const updater = await manager.createGraphUpdater({

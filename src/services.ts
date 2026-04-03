@@ -150,12 +150,26 @@ export class ServiceManager {
 	/**
 	 * Update configuration when working directory changes
 	 */
-	async updateProjectContext(projectRoot: string, projectName?: string): Promise<void> {
+	async updateProjectContext(projectRoot: string, projectName?: string, ctx?: ExtensionContext): Promise<void> {
+		const oldName = this.projectName;
 		this.projectRoot = projectRoot;
 		this.projectName = projectName || basename(projectRoot);
 		
 		// Reset tool collection to use new project context
 		this.toolCollection = null;
+
+		// Recreate SemanticSearchService if project changed (different vector store path)
+		if (oldName !== this.projectName && this.semanticSearchService) {
+			await this.semanticSearchService.close();
+			const embeddingConfig = await this.buildEmbeddingConfig(ctx);
+			if (embeddingConfig) {
+				const vectorStoragePath = join(homedir(), '.cgs', 'vectors', this.projectName);
+				this.semanticSearchService = new SemanticSearchService(embeddingConfig, {
+					storagePath: vectorStoragePath,
+					projectName: this.projectName,
+				});
+			}
+		}
 	}
 	
 	/**
