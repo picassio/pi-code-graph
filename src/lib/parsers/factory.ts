@@ -18,6 +18,7 @@ import { ImportProcessor } from './import-processor.js';
 import { StructureProcessor } from './structure-processor.js';
 import { DefinitionProcessor } from './definition-processor.js';
 import { CallProcessor } from './call-processor.js';
+import { buildWorkspaceMap, type WorkspaceMap } from './workspace-resolver.js';
 
 // =============================================================================
 // Function Registry Trie Implementation
@@ -152,6 +153,7 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
 
   private readonly unignorePaths: Set<string> | null;
   private readonly excludePaths: Set<string> | null;
+  private readonly workspaceMap: WorkspaceMap;
 
   // Cached processor instances
   private _importProcessor: ImportProcessor | null = null;
@@ -179,6 +181,7 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
     this.astCache = options.astCache ?? new ASTCacheImpl();
     this.unignorePaths = options.unignorePaths ?? null;
     this.excludePaths = options.excludePaths ?? null;
+    this.workspaceMap = buildWorkspaceMap(this.repoPath, this.projectName);
   }
 
   // ===========================================================================
@@ -191,7 +194,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.repoPath,
         this.projectName,
         this.ingestor,
-        this.functionRegistry
+        this.functionRegistry,
+        this.workspaceMap
       );
     }
     return this._importProcessor;

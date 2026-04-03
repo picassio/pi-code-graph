@@ -18,6 +18,7 @@ import { safeDecodeText, safeDecodeWithFallback, sortedCaptures } from './base.j
 import * as cs from '../constants.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { WorkspaceMap } from './workspace-resolver.js';
 
 // =============================================================================
 // Cache Functions
@@ -73,12 +74,14 @@ export class ImportProcessor implements ImportProcessorProtocol {
 
   private isLocalModule: LocalModuleCache;
   private isLocalJavaImport: LocalModuleCache;
+  private workspaceMap: WorkspaceMap | null;
 
   constructor(
     repoPath: string,
     projectName: string,
     ingestor: IngestorProtocol,
-    functionRegistry: FunctionRegistryTrie | null = null
+    functionRegistry: FunctionRegistryTrie | null = null,
+    workspaceMap: WorkspaceMap | null = null
   ) {
     this.repoPath = repoPath;
     this.projectName = projectName;
@@ -86,6 +89,7 @@ export class ImportProcessor implements ImportProcessorProtocol {
     this.functionRegistry = functionRegistry;
     this.isLocalModule = createLocalModuleCache(repoPath);
     this.isLocalJavaImport = createLocalJavaImportCache(repoPath);
+    this.workspaceMap = workspaceMap;
   }
 
   // ===========================================================================
@@ -330,6 +334,14 @@ export class ImportProcessor implements ImportProcessorProtocol {
 
   private resolveJsModulePath(importPath: string, currentModule: string): string {
     if (!importPath.startsWith(cs.PATH_CURRENT_DIR)) {
+      // Check workspace map for monorepo cross-package imports
+      if (this.workspaceMap) {
+        const resolved = this.workspaceMap.resolve(importPath);
+        if (resolved) {
+          logger.info(`[import] Workspace resolved: ${importPath} → ${resolved}`);
+          return resolved;
+        }
+      }
       return importPath.replace(/\//g, cs.SEPARATOR_DOT);
     }
 

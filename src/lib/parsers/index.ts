@@ -43,6 +43,12 @@ export {
   shouldSkipPath,
 } from './structure-processor.js';
 
+export {
+  buildWorkspaceMap,
+  type WorkspaceMap,
+  type WorkspacePackage,
+} from './workspace-resolver.js';
+
 // =============================================================================
 // Type Exports
 // =============================================================================
