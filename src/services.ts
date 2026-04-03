@@ -6,7 +6,8 @@
  */
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { homedir } from "node:os";
 
 import {
 	MemgraphService,
@@ -22,6 +23,7 @@ import {
 } from "./lib/llm-service.js";
 import {
 	EmbeddingService,
+	SemanticSearchService,
 	type EmbeddingConfig,
 } from "./lib/embeddings.js";
 import {
@@ -71,6 +73,7 @@ export class ServiceManager {
 	private memgraphService: MemgraphService | null = null;
 	private cypherGenerator: CypherGenerator | null = null;
 	private embeddingService: EmbeddingService | null = null;
+	private semanticSearchService: SemanticSearchService | null = null;
 	private toolCollection: ToolCollection | null = null;
 	
 	private initialized = false;
@@ -128,10 +131,17 @@ export class ServiceManager {
 			this.cypherGenerator = createCypherGenerator(cypherConfig);
 		}
 		
-		// Initialize EmbeddingService based on settings
+		// Initialize EmbeddingService and SemanticSearchService based on settings
 		const embeddingConfig = await this.buildEmbeddingConfig(ctx);
 		if (embeddingConfig) {
 			this.embeddingService = new EmbeddingService(embeddingConfig);
+			
+			// Create SemanticSearchService with zvec-backed vector store
+			const vectorStoragePath = join(homedir(), '.cgs', 'vectors', this.projectName);
+			this.semanticSearchService = new SemanticSearchService(embeddingConfig, {
+				storagePath: vectorStoragePath,
+				projectName: this.projectName,
+			});
 		}
 		
 		this.initialized = true;
@@ -179,6 +189,16 @@ export class ServiceManager {
 	}
 	
 	/**
+	 * Get the SemanticSearchService (if available)
+	 */
+	async getSemanticSearchService(): Promise<SemanticSearchService | null> {
+		if (!this.initialized) {
+			await this.initialize();
+		}
+		return this.semanticSearchService;
+	}
+	
+	/**
 	 * Get or create the ToolCollection
 	 */
 	async getToolCollection(): Promise<ToolCollection> {
@@ -188,14 +208,14 @@ export class ServiceManager {
 		
 		const graphService = await this.getMemgraphService();
 		const cypherGenerator = await this.getCypherGenerator();
-		const embeddingService = await this.getEmbeddingService();
+		const semanticSearchService = await this.getSemanticSearchService();
 		
 		this.toolCollection = await createAllTools({
 			projectRoot: this.projectRoot,
 			projectName: this.projectName,
 			graphService,
 			cypherGenerator: cypherGenerator || undefined,
-			embeddingService: embeddingService || undefined,
+			semanticSearchService: semanticSearchService || undefined,
 		});
 		
 		return this.toolCollection;
@@ -208,9 +228,11 @@ export class ServiceManager {
 		config: GraphUpdaterConfig = {}
 	): Promise<GraphUpdater> {
 		const graphService = await this.getMemgraphService();
+		const semanticSearchService = await this.getSemanticSearchService();
 		
 		return createGraphUpdater(graphService, this.projectRoot, {
 			projectName: this.projectName,
+			semanticSearchService: semanticSearchService || undefined,
 			...config,
 		});
 	}
@@ -295,6 +317,10 @@ export class ServiceManager {
 		}
 		this.cypherGenerator = null;
 		this.embeddingService = null;
+		if (this.semanticSearchService) {
+			await this.semanticSearchService.close();
+			this.semanticSearchService = null;
+		}
 		this.toolCollection = null;
 		this.initialized = false;
 	}

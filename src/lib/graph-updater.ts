@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, stat, readdir, access, constants } from 'node:fs/promises';
 import { join, relative, dirname, basename, extname, resolve } from 'node:path';
 
+import type { SemanticSearchService } from './embeddings.js';
+
 import type { Node as TreeSitterNode } from 'web-tree-sitter';
 import { SupportedLanguage } from './constants.js';
 import type { LanguageQueries, QualifiedName, SimpleNameLookup, NodeType, ResultRow } from './types.js';
@@ -57,8 +59,10 @@ export interface GraphUpdaterConfig {
   astCacheMaxMemoryMB?: number;
   /** Flush interval (number of files between flushes) */
   flushInterval?: number;
-  /** Enable embedding generation */
+  /** Enable embedding generation (defaults to true when semanticSearchService is provided) */
   enableEmbeddings?: boolean;
+  /** Semantic search service for embedding generation and vector storage */
+  semanticSearchService?: SemanticSearchService;
 }
 
 /** Query protocol for services that support Cypher queries */
@@ -570,6 +574,7 @@ export class GraphUpdater {
   private readonly hashCacheFilename: string;
   private readonly flushInterval: number;
   private readonly enableEmbeddings: boolean;
+  private readonly semanticSearchService?: SemanticSearchService;
   private readonly onProgress?: ProgressCallback;
 
   // For single-file mode
@@ -601,7 +606,8 @@ export class GraphUpdater {
     this.excludePaths = config.excludePaths ?? null;
     this.hashCacheFilename = config.hashCacheFilename ?? HASH_CACHE_FILENAME;
     this.flushInterval = config.flushInterval ?? DEFAULT_FLUSH_INTERVAL;
-    this.enableEmbeddings = config.enableEmbeddings ?? false;
+    this.semanticSearchService = config.semanticSearchService;
+    this.enableEmbeddings = config.enableEmbeddings ?? (config.semanticSearchService != null);
     this.onProgress = config.onProgress;
 
     // Initialize registries
@@ -1047,12 +1053,93 @@ export class GraphUpdater {
   }
 
   /**
-   * Generate semantic embeddings for functions
+   * Generate semantic embeddings for functions and store in zvec via SemanticSearchService
    */
   private async generateSemanticEmbeddings(): Promise<void> {
-    // This would integrate with the embeddings service
-    // Placeholder for now - actual implementation would use embeddings.ts
-    logger.info('[graph-updater] Embedding generation not yet implemented in TypeScript port');
+    if (!this.semanticSearchService) {
+      logger.warn('[graph-updater] No SemanticSearchService provided, skipping embedding generation');
+      return;
+    }
+
+    if (!this.isQueryProtocol(this.ingestor)) {
+      logger.warn('[graph-updater] Ingestor does not support queries, skipping embedding generation');
+      return;
+    }
+
+    // Query all functions/methods from the graph
+    const results = await this.ingestor.fetchAll(cs.CYPHER_QUERY_EMBEDDINGS, {
+      project_name: this.projectName,
+    });
+
+    if (!results || results.length === 0) {
+      logger.info('[graph-updater] No functions/methods found for embedding generation');
+      return;
+    }
+
+    logger.info(`[graph-updater] Generating embeddings for ${results.length} functions/methods...`);
+
+    // Build embedding documents from source code
+    const BATCH_SIZE = 50;
+    const docs: Array<{
+      id: string;
+      code: string;
+      qualifiedName: string;
+      filePath: string;
+      project: string;
+      nodeType?: string;
+    }> = [];
+
+    for (const row of results) {
+      const qualifiedName = row.qualified_name as string;
+      const filePath = row.path as string | null;
+      const startLine = row.start_line as number | null;
+      const endLine = row.end_line as number | null;
+
+      if (!filePath || startLine === null || endLine === null) {
+        continue;
+      }
+
+      try {
+        const fullPath = join(this.repoPath, filePath);
+        const content = await readFile(fullPath, 'utf-8');
+        const lines = content.split('\n');
+        const codeSnippet = lines.slice(startLine - 1, endLine).join('\n');
+
+        // Embedding text: qualifiedName + code snippet (truncated)
+        const embeddingText = `${qualifiedName}\n${codeSnippet.slice(0, 500)}`;
+
+        docs.push({
+          id: qualifiedName,
+          code: embeddingText,
+          qualifiedName,
+          filePath,
+          project: this.projectName,
+          nodeType: 'Function',
+        });
+      } catch {
+        logger.debug(`[graph-updater] Skipping unreadable file: ${filePath}`);
+      }
+    }
+
+    if (docs.length === 0) {
+      logger.info('[graph-updater] No readable functions found for embedding generation');
+      return;
+    }
+
+    // Process in batches of 50
+    let processed = 0;
+    for (let start = 0; start < docs.length; start += BATCH_SIZE) {
+      const batch = docs.slice(start, start + BATCH_SIZE);
+      await this.semanticSearchService.indexCodeBatch(batch);
+      processed += batch.length;
+
+      this.onProgress?.(processed, docs.length, `Embeddings: ${processed}/${docs.length}`);
+      logger.info(`[graph-updater] Embedded ${processed}/${docs.length} functions`);
+    }
+
+    // Optimize the vector store after bulk indexing
+    await this.semanticSearchService.optimize();
+    logger.info(`[graph-updater] Embedding generation complete: ${docs.length} functions indexed`);
   }
 
   /**

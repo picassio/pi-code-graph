@@ -55,7 +55,7 @@ import {
 
 import { MemgraphService } from '../graph-service.js';
 import { CypherGenerator } from '../llm-service.js';
-import { EmbeddingService } from '../embeddings.js';
+import { SemanticSearchService } from '../embeddings.js';
 
 // =============================================================================
 // Tool Enum
@@ -133,7 +133,7 @@ export interface ToolsConfig {
   projectName: string;
   graphService: MemgraphService;
   cypherGenerator?: CypherGenerator;
-  embeddingService?: EmbeddingService;
+  semanticSearchService?: SemanticSearchService;
   queryConfig?: {
     maxResultRows?: number;
     maxTokens?: number;
@@ -158,7 +158,7 @@ export async function createAllTools(config: ToolsConfig): Promise<ToolCollectio
     projectName,
     graphService,
     cypherGenerator,
-    embeddingService,
+    semanticSearchService,
     queryConfig,
     dependencyConfig,
   } = config;
@@ -171,14 +171,14 @@ export async function createAllTools(config: ToolsConfig): Promise<ToolCollectio
     ? createCodebaseQueryTool(graphService, cypherGenerator, queryConfig)
     : createCodebaseQueryToolWithDefaults(graphService, undefined, queryConfig);
 
-  // Create semantic search tool (may be null if no embedding service)
+  // Create semantic search tool (may be null if no SemanticSearchService)
   let semanticSearch: SemanticSearchTool | null = null;
-  if (embeddingService) {
+  if (semanticSearchService) {
     semanticSearch = createSemanticSearchTool({
       projectRoot,
       projectName,
       graphService,
-      embeddingService,
+      semanticSearchService,
     });
   } else {
     semanticSearch = await createSemanticSearchToolWithDefaults({
