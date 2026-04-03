@@ -23,6 +23,8 @@ export interface WorkspacePackage {
   relativePath: string;
   /** Qualified name prefix (e.g., "pi-mono.packages.ai") */
   qualifiedPrefix: string;
+  /** Resolved subpath exports: "." → "src.index", "./oauth" → "src.oauth" */
+  subpathMap: Map<string, string>;
 }
 
 export interface WorkspaceMap {
@@ -96,10 +98,14 @@ export function buildWorkspaceMap(repoPath: string, projectName: string): Worksp
           const relativePath = relative(repoPath, dir).replace(/\\/g, '/');
           const qualifiedPrefix = `${projectName}${SEPARATOR_DOT}${relativePath.replace(/\//g, SEPARATOR_DOT)}`;
 
+          // Build subpath map from package.json exports
+          const subpathMap = buildSubpathMap(pkg, dir);
+
           packages.set(pkg.name, {
             name: pkg.name,
             relativePath,
             qualifiedPrefix,
+            subpathMap,
           });
 
           logger.info(`[workspace] Found package: ${pkg.name} → ${relativePath} (${qualifiedPrefix})`);
@@ -169,19 +175,30 @@ function createWorkspaceMap(packages: Map<string, WorkspacePackage>): WorkspaceM
     resolve(importPath: string): string | null {
       if (packages.size === 0) return null;
 
-      // Try exact match first: "@scope/pkg"
+      // Try exact match first: "@scope/pkg" → resolve main entry
       if (packages.has(importPath)) {
-        return packages.get(importPath)!.qualifiedPrefix;
+        const pkg = packages.get(importPath)!;
+        const mainEntry = pkg.subpathMap.get('.');
+        if (mainEntry) {
+          return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${mainEntry}`;
+        }
+        return pkg.qualifiedPrefix;
       }
 
-      // Try subpath match: "@scope/pkg/subpath" → qualified + subpath
-      // e.g., "@mariozechner/pi-ai/oauth" → "pi-mono.packages.ai.src.oauth"
+      // Try subpath match: "@scope/pkg/subpath"
       for (const [pkgName, pkg] of packages) {
         if (importPath.startsWith(pkgName + '/')) {
-          const subpath = importPath.slice(pkgName.length + 1);
-          // Resolve subpath: check for src/ convention
-          const subQn = resolveSubpath(pkg, subpath);
-          return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${subQn}`;
+          const subpath = './' + importPath.slice(pkgName.length + 1);
+
+          // Check exports map first (e.g., "./oauth" → "src.oauth")
+          const exportResolved = pkg.subpathMap.get(subpath);
+          if (exportResolved) {
+            return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${exportResolved}`;
+          }
+
+          // Fallback: direct subpath mapping
+          const rawSubpath = importPath.slice(pkgName.length + 1);
+          return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${rawSubpath.replace(/\//g, SEPARATOR_DOT)}`;
         }
       }
 
@@ -191,10 +208,79 @@ function createWorkspaceMap(packages: Map<string, WorkspacePackage>): WorkspaceM
 }
 
 /**
- * Resolve a subpath import within a workspace package
- * e.g., "oauth" in "@mariozechner/pi-ai/oauth" → "src.oauth" or "oauth"
+ * Build a map of package.json exports subpaths → source module qualified names
+ * e.g., "./oauth" → "src.oauth" (from exports: { "./oauth": "./dist/oauth.js" })
  */
-function resolveSubpath(pkg: WorkspacePackage, subpath: string): string {
-  // Convert slashes to dots
-  return subpath.replace(/\//g, SEPARATOR_DOT);
+function buildSubpathMap(pkg: any, pkgDir: string): Map<string, string> {
+  const map = new Map<string, string>();
+
+  // Read main/module entry point
+  const mainEntry = pkg.main || pkg.module;
+  if (mainEntry) {
+    const srcPath = distToSrc(mainEntry, pkgDir);
+    if (srcPath) {
+      map.set('.', srcPath);
+    }
+  }
+
+  // Read exports field
+  const exports = pkg.exports;
+  if (!exports || typeof exports !== 'object') {
+    return map;
+  }
+
+  for (const [subpath, target] of Object.entries(exports)) {
+    // Get the import/default target
+    let targetPath: string | null = null;
+    if (typeof target === 'string') {
+      targetPath = target;
+    } else if (target && typeof target === 'object') {
+      const t = target as Record<string, string>;
+      targetPath = t.import || t.default || t.require || null;
+    }
+
+    if (!targetPath) continue;
+
+    // Convert dist path → src path → qualified name
+    const srcPath = distToSrc(targetPath, pkgDir);
+    if (srcPath) {
+      map.set(subpath, srcPath);
+      logger.info(`[workspace] Export: ${subpath} → ${srcPath}`);
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Convert a dist/build output path to its source equivalent
+ * e.g., "./dist/oauth.js" → "src.oauth" (if src/oauth.ts exists)
+ *       "./dist/providers/google.js" → "src.providers.google"
+ */
+function distToSrc(distPath: string, pkgDir: string): string | null {
+  // Remove leading ./ and extension
+  let p = distPath.replace(/^\.?\//, '').replace(/\.[^.]+$/, '');
+
+  // Try replacing dist/build/out with src
+  const distPrefixes = ['dist/', 'build/', 'out/', 'lib/'];
+  for (const prefix of distPrefixes) {
+    if (p.startsWith(prefix)) {
+      const srcEquiv = 'src/' + p.slice(prefix.length);
+      // Check if src file exists
+      const srcTs = join(pkgDir, srcEquiv + '.ts');
+      const srcTsx = join(pkgDir, srcEquiv + '.tsx');
+      const srcIndex = join(pkgDir, srcEquiv, 'index.ts');
+      if (existsSync(srcTs) || existsSync(srcTsx)) {
+        return srcEquiv.replace(/\//g, SEPARATOR_DOT);
+      }
+      if (existsSync(srcIndex)) {
+        return (srcEquiv + '.index').replace(/\//g, SEPARATOR_DOT);
+      }
+      // Fallback: use src path even if file not found (might be generated)
+      return srcEquiv.replace(/\//g, SEPARATOR_DOT);
+    }
+  }
+
+  // No dist prefix — use as-is
+  return p.replace(/\//g, SEPARATOR_DOT);
 }
