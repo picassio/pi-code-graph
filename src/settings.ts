@@ -9,7 +9,6 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import * as TOML from "@iarna/toml";
 
 /** Config directory path */
@@ -51,9 +50,6 @@ export interface CGRSettings {
 	projectName?: string;
 	allowIndex: boolean;
 
-	// CGR Binary
-	cgrBinary: string;
-	timeout: number;
 }
 
 /**
@@ -76,8 +72,6 @@ const DEFAULT_SETTINGS: CGRSettings = {
 
 	// Project defaults
 	allowIndex: false,
-	cgrBinary: "cgr",
-	timeout: 120000,
 };
 
 // Current settings (runtime state)
@@ -108,18 +102,14 @@ export function resetSettings(): void {
  * Load settings from environment variables (initial load)
  */
 export function loadFromEnvironment(): void {
-	if (process.env.CGR_BINARY) {
-		currentSettings.cgrBinary = process.env.CGR_BINARY;
-	}
+
 	if (process.env.CGR_PROJECT_NAME) {
 		currentSettings.projectName = process.env.CGR_PROJECT_NAME;
 	}
 	if (process.env.CGR_ALLOW_INDEX === "true") {
 		currentSettings.allowIndex = true;
 	}
-	if (process.env.CGR_TIMEOUT) {
-		currentSettings.timeout = parseInt(process.env.CGR_TIMEOUT, 10);
-	}
+
 	if (process.env.MEMGRAPH_HOST) {
 		currentSettings.memgraphHost = process.env.MEMGRAPH_HOST;
 	}
@@ -157,64 +147,6 @@ export function loadFromEnvironment(): void {
 }
 
 /**
- * Build environment variables from current settings
- */
-export function buildEnvironmentFromSettings(ctx: ExtensionContext): Record<string, string> {
-	const env: Record<string, string> = {
-		...process.env as Record<string, string>,
-		MEMGRAPH_HOST: currentSettings.memgraphHost,
-		MEMGRAPH_PORT: currentSettings.memgraphPort,
-	};
-
-	// LLM configuration
-	if (currentSettings.llmSource === "ollama") {
-		env.ORCHESTRATOR_PROVIDER = "ollama";
-		env.ORCHESTRATOR_MODEL = currentSettings.ollamaModel;
-		env.ORCHESTRATOR_ENDPOINT = currentSettings.ollamaEndpoint;
-		env.CYPHER_PROVIDER = "ollama";
-		env.CYPHER_MODEL = currentSettings.ollamaModel;
-		env.CYPHER_ENDPOINT = currentSettings.ollamaEndpoint;
-	} else if (currentSettings.llmSource === "manual" && currentSettings.manualApiKey) {
-		const provider = currentSettings.manualProvider || "google";
-		env.ORCHESTRATOR_PROVIDER = provider;
-		env.ORCHESTRATOR_API_KEY = currentSettings.manualApiKey;
-		if (currentSettings.manualModel) {
-			env.ORCHESTRATOR_MODEL = currentSettings.manualModel;
-		}
-		env.CYPHER_PROVIDER = provider;
-		env.CYPHER_API_KEY = currentSettings.manualApiKey;
-		if (currentSettings.manualModel) {
-			env.CYPHER_MODEL = currentSettings.manualModel;
-		}
-
-		// OpenRouter needs base URL
-		if (provider === "openrouter") {
-			env.ORCHESTRATOR_ENDPOINT = "https://openrouter.ai/api/v1";
-			env.CYPHER_ENDPOINT = "https://openrouter.ai/api/v1";
-		}
-	}
-	// For "auto", the auth.ts module handles it via ctx.modelRegistry
-
-	// Embedding configuration (for future CGR versions with API embedding support)
-	if (currentSettings.embeddingSource !== "local") {
-		env.EMBEDDING_PROVIDER = currentSettings.embeddingSource;
-		if (currentSettings.embeddingApiKey) {
-			env.EMBEDDING_API_KEY = currentSettings.embeddingApiKey;
-		}
-		if (currentSettings.embeddingModel) {
-			env.EMBEDDING_MODEL = currentSettings.embeddingModel;
-		}
-		if (currentSettings.embeddingEndpoint) {
-			env.EMBEDDING_ENDPOINT = currentSettings.embeddingEndpoint;
-		} else if (currentSettings.embeddingSource === "openrouter") {
-			env.EMBEDDING_ENDPOINT = "https://openrouter.ai/api/v1";
-		}
-	}
-
-	return env;
-}
-
-/**
  * TOML structure for config file
  */
 interface TOMLConfig {
@@ -247,10 +179,7 @@ interface TOMLConfig {
 		name?: string;
 		allow_index?: boolean;
 	};
-	advanced?: {
-		binary?: string;
-		timeout?: number;
-	};
+
 }
 
 /**
@@ -280,10 +209,7 @@ export function saveSettingsToFile(): { success: boolean; error?: string } {
 			project: {
 				allow_index: currentSettings.allowIndex,
 			},
-			advanced: {
-				binary: currentSettings.cgrBinary,
-				timeout: currentSettings.timeout,
-			},
+
 		};
 
 		// Add optional LLM fields
@@ -432,16 +358,6 @@ export function loadSettingsFromFile(): { success: boolean; error?: string } {
 			}
 		}
 
-		// Apply advanced settings
-		if (config.advanced) {
-			if (config.advanced.binary) {
-				currentSettings.cgrBinary = config.advanced.binary;
-			}
-			if (config.advanced.timeout) {
-				currentSettings.timeout = config.advanced.timeout;
-			}
-		}
-
 		return { success: true };
 	} catch (err) {
 		return {
@@ -498,18 +414,4 @@ export function getMemgraphCredentials(): { user: string; password: string | und
 	};
 }
 
-/**
- * Persist settings to ~/.cgr/config.toml
- * @deprecated Use saveSettingsToFile() for clearer naming
- */
-export function persistSettings(_pi: ExtensionAPI): void {
-	saveSettingsToFile();
-}
 
-/**
- * Restore settings from ~/.cgr/config.toml
- * @deprecated Use loadSettingsFromFile() for clearer naming
- */
-export function restoreSettings(_ctx: ExtensionContext): void {
-	loadSettingsFromFile();
-}

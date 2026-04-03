@@ -6,7 +6,6 @@
  *   /cgs status    - Check availability
  *   /cgs query     - Quick query
  *   /cgs index     - Index repository
- *   /cgs clear     - Clear widget
  *   /cgs help      - Show help
  */
 
@@ -42,7 +41,7 @@ function saveSettings(ctx: ExtensionContext): void {
  */
 export function registerCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("cgs", {
-		description: "Code Graph RAG - /cgs <command> [args]. Commands: config, status, query, index, docker, clear, help",
+		description: "Code Graph RAG - /cgs <command> [args]. Commands: config, status, query, index, docker, help",
 		getArgumentCompletions: (prefix) => {
 			const subs = [
 				{ value: "config", label: "config", description: "Configure extension (LLM, embedding, Memgraph)" },
@@ -50,7 +49,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 				{ value: "query", label: "query", description: "Query the code graph" },
 				{ value: "index", label: "index", description: "Index/update repository" },
 				{ value: "docker", label: "docker", description: "Manage Memgraph Docker container" },
-				{ value: "clear", label: "clear", description: "Clear results widget" },
 				{ value: "help", label: "help", description: "Show help" },
 			];
 			return subs.filter(s => s.value.startsWith(prefix));
@@ -68,7 +66,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 					"🔍 Query — Query the code graph",
 					"📥 Index — Index/update repository",
 					"🐳 Docker — Manage Memgraph container",
-					"❓ Help — Show help",
 				]);
 
 				if (!choice) return;
@@ -79,7 +76,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 					"🔍 Query — Query the code graph": "query",
 					"📥 Index — Index/update repository": "index",
 					"🐳 Docker — Manage Memgraph container": "docker",
-					"❓ Help — Show help": "help",
 				};
 
 				const mapped = menuMap[choice];
@@ -92,7 +88,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 					case "query": await handleQuery(ctx, ""); return;
 					case "index": await handleIndex(ctx, ""); return;
 					case "docker": await handleDocker(ctx, ""); return;
-					case "help": await handleHelp(ctx); return;
 				}
 				return;
 			}
@@ -121,11 +116,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 				case "docker":
 				case "d":
 					await handleDocker(ctx, subargs);
-					break;
-
-				case "clear":
-					ctx.ui.setWidget("cgs", undefined);
-					ctx.ui.notify("Widget cleared", "info");
 					break;
 
 				case "help":
@@ -169,26 +159,19 @@ async function handleStatus(ctx: ExtensionContext): Promise<void> {
 
 	const lines = [
 		"Code Graph RAG Status",
-		"═════════════════════",
 		"",
-		"Status:",
-		`  Memgraph:  ${mgStatus.available ? "✓ Connected" : `✗ ${mgStatus.error || "not reachable"}`}`,
-		`  LLM:       ${credStatus.valid ? `✓ ${credStatus.provider}` : `✗ ${credStatus.error || "no credentials"}`}`,
-		"",
-		`Memgraph:    ${settings.memgraphHost}:${settings.memgraphPort}`,
-		`Config:      ${getConfigFilePath()}`,
+		`Memgraph:  ${mgStatus.available ? "✓ Connected" : `✗ ${mgStatus.error || "not reachable"}`}`,
+		`LLM:       ${credStatus.valid ? `✓ ${credStatus.provider}` : `✗ ${credStatus.error || "no credentials"}`}`,
+		`Memgraph:  ${settings.memgraphHost}:${settings.memgraphPort}`,
+		`Config:    ${getConfigFilePath()}`,
 	];
 
-	// Show service manager status if initialized
 	const manager = getServiceManager();
 	if (manager.isInitialized()) {
-		const status = await manager.getStatus(ctx);
-		lines.push("");
-		lines.push("Service Status:");
-		lines.push(`  Initialized: ${status.initialized ? "✓" : "✗"}`);
+		lines.push(`Services:  ✓ Initialized`);
 	}
 
-	ctx.ui.setWidget("cgs", lines, { placement: "aboveEditor" });
+	ctx.ui.notify(lines.join("\n"), "info");
 }
 
 /**
@@ -224,19 +207,17 @@ async function handleQuery(ctx: ExtensionContext, query: string): Promise<void> 
 
 		ctx.ui.setStatus("cgs", undefined);
 
-		// Format results for widget display
-		const lines: string[] = ["Query Results", "═════════════", ""];
+		const lines: string[] = [];
 		
 		if (result.query_used) {
-			lines.push("Cypher Query:", result.query_used, "");
+			lines.push(`Cypher: ${result.query_used}`, "");
 		}
 		
 		if (result.results && result.results.length > 0) {
-			lines.push(`Found ${result.results.length} result(s):`, "");
+			lines.push(`Found ${result.results.length} result(s):`);
 			for (const row of result.results.slice(0, 20)) {
-				// Format each result row
 				const rowStr = typeof row === "object" 
-					? JSON.stringify(row, null, 2).split("\n").map(l => "  " + l).join("\n")
+					? JSON.stringify(row, null, 2)
 					: String(row);
 				lines.push(rowStr);
 			}
@@ -249,7 +230,7 @@ async function handleQuery(ctx: ExtensionContext, query: string): Promise<void> 
 			lines.push("No results found.");
 		}
 
-		ctx.ui.setWidget("cgs", lines, { placement: "aboveEditor" });
+		ctx.ui.notify(lines.join("\n"), "info");
 	} catch (err) {
 		ctx.ui.setStatus("cgs", undefined);
 		ctx.ui.notify(`Query error: ${err instanceof Error ? err.message : "Unknown"}`, "error");
@@ -366,9 +347,6 @@ async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> 
 		case "s": {
 			const status = getDockerStatus();
 			const lines = [
-				"Docker Status",
-				"═════════════",
-				"",
 				`Docker:          ${status.installed ? "✓ Installed" : "✗ Not installed"}`,
 				`Docker Compose:  ${status.composeInstalled ? "✓ Installed" : "✗ Not installed"}`,
 				`Memgraph:        ${status.memgraphRunning ? (status.memgraphHealthy ? "✓ Running (healthy)" : "⚠ Running (unhealthy)") : "✗ Not running"}`,
@@ -377,10 +355,9 @@ async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> 
 				lines.push(`Container ID:    ${status.containerId}`);
 			}
 			if (status.error) {
-				lines.push("", `Error: ${status.error}`);
+				lines.push(`Error: ${status.error}`);
 			}
-			lines.push("", `Compose file: ${getDockerComposePath()}`);
-			ctx.ui.setWidget("cgs", lines, { placement: "aboveEditor" });
+			ctx.ui.notify(lines.join("\n"), "info");
 			break;
 		}
 
@@ -466,10 +443,9 @@ async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> 
 
 		case "logs":
 		case "log": {
-			const lines = parseInt(parts[1], 10) || 50;
-			const logs = getMemgraphLogs(lines);
-			const logLines = ["Memgraph Logs", "═════════════", "", ...logs.split("\n").slice(0, 100)];
-			ctx.ui.setWidget("cgs", logLines, { placement: "aboveEditor" });
+			const logLines = parseInt(parts[1], 10) || 50;
+			const logs = getMemgraphLogs(logLines);
+			ctx.ui.notify(logs.split("\n").slice(0, 50).join("\n"), "info");
 			break;
 		}
 
@@ -487,47 +463,20 @@ async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> 
 async function handleHelp(ctx: ExtensionContext): Promise<void> {
 	const settings = getSettings();
 
-	const helpText = `
-Code Graph RAG Extension
-════════════════════════
+	const helpText = [
+		"Code Graph RAG — /cgs",
+		"",
+		"/cgs              Interactive menu",
+		"/cgs config (c)   Configure LLM, embedding, Memgraph",
+		"/cgs status (s)   Check service availability",
+		"/cgs query (q)    Query the code graph",
+		"/cgs index (i)    Index/update repository",
+		"/cgs docker (d)   Manage Memgraph container",
+		"",
+		`Config: ${getConfigFilePath()}`,
+	].join("\n");
 
-Commands:
-  /cgs config        Configure extension interactively
-  /cgs status        Check Memgraph, LLM, and service availability
-  /cgs query <q>     Query the code graph
-  /cgs index         Index/update current repository
-  /cgs docker        Manage Memgraph Docker container
-  /cgs clear         Clear the results widget
-  /cgs help          Show this help
-
-Shortcuts:
-  /cgs c             → config
-  /cgs s             → status
-  /cgs q <query>     → query
-  /cgs i             → index
-
-Tools (for LLM):
-  • query_code_graph        Natural language queries
-  • get_code_from_graph     Get source by qualified name
-  • semantic_code_search    Find code by meaning
-  • analyze_code_dependencies  Analyze callers/callees
-  • list_graph_projects     List indexed projects
-  ${settings.allowIndex ? "• index_repository        Index/update graph" : ""}
-
-Config File:
-  ${getConfigFilePath()}
-
-Setup:
-  1. docker run -d -p 7687:7687 memgraph/memgraph
-  2. /cgs config  (configure LLM provider)
-  3. /cgs index   (index your repository)
-  4. Use query tools in conversations
-
-Note: This extension now uses a native TypeScript library
-instead of the Python CGR CLI for all operations.
-`.trim();
-
-	ctx.ui.setWidget("cgs", helpText.split("\n"), { placement: "aboveEditor" });
+	ctx.ui.notify(helpText, "info");
 }
 
 /**
@@ -553,7 +502,6 @@ async function showConfigMenu(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 		"🧬 Embedding Model (Semantic Search)",
 		"🗄️ Memgraph Connection",
 		"📁 Project Settings",
-		"🔧 Advanced",
 		"📊 Show Current Config",
 		"❌ Cancel",
 	]);
@@ -574,9 +522,6 @@ async function showConfigMenu(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 			break;
 		case "📁 Project Settings":
 			await configureProject(pi, ctx);
-			break;
-		case "🔧 Advanced":
-			await configureAdvanced(pi, ctx);
 			break;
 		case "📊 Show Current Config":
 			await showCurrentConfig(ctx);
@@ -1107,39 +1052,6 @@ async function configureProject(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 /**
  * Configure advanced settings
  */
-async function configureAdvanced(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	const settings = getSettings();
-
-	const choice = await ctx.ui.select("Advanced Settings", [
-		`CGR Binary (legacy): ${settings.cgrBinary}`,
-		`Timeout: ${settings.timeout}ms`,
-		"← Back",
-	]);
-
-	if (!choice || choice === "← Back") {
-		return showConfigMenu(pi, ctx);
-	}
-
-	if (choice.startsWith("CGR Binary")) {
-		const binary = await ctx.ui.input("CGR Binary Path (for legacy CLI fallback)", settings.cgrBinary);
-		if (binary) {
-			updateSettings({ cgrBinary: binary });
-			saveSettings(ctx);
-			ctx.ui.notify(`CGR binary set to: ${binary}`, "info");
-		}
-	} else if (choice.startsWith("Timeout")) {
-		const timeoutStr = await ctx.ui.input("Timeout (ms)", String(settings.timeout));
-		if (timeoutStr) {
-			const timeout = parseInt(timeoutStr, 10);
-			if (!isNaN(timeout) && timeout > 0) {
-				updateSettings({ timeout });
-				saveSettings(ctx);
-				ctx.ui.notify(`Timeout set to: ${timeout}ms`, "info");
-			}
-		}
-	}
-}
-
 /**
  * Show current configuration
  */
@@ -1149,9 +1061,8 @@ async function showCurrentConfig(ctx: ExtensionContext): Promise<void> {
 
 	const lines = [
 		"Code Graph RAG Configuration",
-		"═══════════════════════════════",
 		"",
-		"LLM Provider (Cypher/Orchestration):",
+		"LLM Provider:",
 		`  Source:     ${settings.llmSource}`,
 	];
 
@@ -1202,16 +1113,7 @@ async function showCurrentConfig(ctx: ExtensionContext): Promise<void> {
 	lines.push(`  Indexing:   ${settings.allowIndex ? "Enabled" : "Disabled"}`);
 
 	lines.push("");
-	lines.push("Advanced:");
-	lines.push(`  Binary:     ${settings.cgrBinary} (legacy)`);
-	lines.push(`  Timeout:    ${settings.timeout}ms`);
+	lines.push(`Config: ${getConfigFilePath()}`);
 
-	lines.push("");
-	lines.push(`Config file: ${getConfigFilePath()}`);
-	lines.push("");
-	lines.push("Note: This extension now uses native TypeScript library.");
-	lines.push("The Python CGR CLI is no longer required for operation.");
-
-	ctx.ui.setWidget("cgs", lines, { placement: "aboveEditor" });
-	ctx.ui.notify("Configuration shown above editor. Use /cgs clear to dismiss.", "info");
+	ctx.ui.notify(lines.join("\n"), "info");
 }
