@@ -5,8 +5,9 @@ import { logger } from './logger.js';
  */
 
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, stat, readdir, access, constants } from 'node:fs/promises';
+import { readFile, writeFile, stat, readdir, access, constants, mkdir } from 'node:fs/promises';
 import { join, relative, dirname, basename, extname, resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 import type { SemanticSearchService } from './embeddings.js';
 
@@ -86,7 +87,7 @@ interface ExtendedDefinitionProcessor {
 // Constants
 // =============================================================================
 
-const HASH_CACHE_FILENAME = '.cgr-hash-cache.json';
+const HASH_CACHE_DIR = join(homedir(), '.cgs', 'cache');
 const DEFAULT_FLUSH_INTERVAL = 50;
 const DEFAULT_AST_CACHE_MAX_ENTRIES = 500;
 const DEFAULT_AST_CACHE_MAX_MEMORY_MB = 256;
@@ -543,6 +544,7 @@ export async function loadHashCache(cachePath: string): Promise<FileHashCache> {
  */
 export async function saveHashCache(cachePath: string, hashes: FileHashCache): Promise<void> {
   try {
+    await mkdir(dirname(cachePath), { recursive: true });
     const content = JSON.stringify(hashes, null, 2);
     await writeFile(cachePath, content, 'utf-8');
     logger.info(`[graph-updater] Saved hash cache: ${Object.keys(hashes).length} entries to ${cachePath}`);
@@ -608,7 +610,7 @@ export class GraphUpdater {
 
     this.unignorePaths = config.unignorePaths ?? null;
     this.excludePaths = config.excludePaths ?? null;
-    this.hashCacheFilename = config.hashCacheFilename ?? HASH_CACHE_FILENAME;
+    this.hashCacheFilename = config.hashCacheFilename ?? `${this.projectName}.json`;
     this.flushInterval = config.flushInterval ?? DEFAULT_FLUSH_INTERVAL;
     this.semanticSearchService = config.semanticSearchService;
     this.enableEmbeddings = config.enableEmbeddings ?? (config.semanticSearchService != null);
@@ -814,10 +816,6 @@ export class GraphUpdater {
       const files: string[] = [];
 
       for (const entry of entries) {
-        if (entry === this.hashCacheFilename) {
-          continue;
-        }
-
         const fullPath = join(dir, entry);
         try {
           const entryStat = await stat(fullPath);
@@ -849,7 +847,7 @@ export class GraphUpdater {
    * Process all files with incremental change detection
    */
   private async processFiles(force: boolean): Promise<void> {
-    const cachePath = join(this.repoPath, this.hashCacheFilename);
+    const cachePath = join(HASH_CACHE_DIR, this.hashCacheFilename);
     const oldHashes = force ? {} : await loadHashCache(cachePath);
 
     if (force) {
