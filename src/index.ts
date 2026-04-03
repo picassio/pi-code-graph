@@ -102,6 +102,8 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 				"2. Then use `query_code_graph`, `semantic_code_search`, `analyze_code_dependencies` to explore",
 			);
 		} else {
+			const { name: currentProject } = manager.getProjectInfo();
+
 			lines.push(
 				"",
 				"### Available Workflow",
@@ -112,15 +114,26 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 				"- Use `list_graph_projects` to see indexed projects",
 			);
 			if (indexingEnabled) {
-				lines.push(
-					"- Use `index_repository` to update the graph after code changes",
-					"",
-					"### Important: Keep the index up to date",
-					"Before using query tools (`query_code_graph`, `semantic_code_search`, `analyze_code_dependencies`),",
-					"run `index_repository` first if you or the user have made code changes since the last index.",
-					"This ensures the graph and vector search reflect the latest code. The update is incremental — only changed files are re-processed.",
-				);
+				lines.push("- Use `index_repository` to update the graph after code changes");
 			}
+
+			lines.push(
+				"",
+				"### Important: Keep the index up to date",
+				"Before using query tools (`query_code_graph`, `semantic_code_search`, `analyze_code_dependencies`),",
+				"run `index_repository` first if you or the user have made code changes since the last index.",
+				"This ensures the graph and vector search reflect the latest code. The update is incremental -- only changed files are re-processed.",
+			);
+
+			lines.push(
+				"",
+				"### Multi-project support",
+				`Current project: **${currentProject}**`,
+				"- All indexed projects share one Memgraph instance. Nodes are prefixed by project name (e.g. `pi-code-graph.src.services.ServiceManager`).",
+				"- When querying with `query_code_graph`, include the project prefix for cross-project queries (e.g. 'classes where qualified_name starts with pi-squad').",
+				"- Use `list_graph_projects` to see all indexed projects.",
+				"- Use `index_repository` with `project_root` param to index a different project from any directory.",
+			);
 		}
 
 		lines.push("");
@@ -183,7 +196,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 		}
 
 		// Show brief status in footer
-		ctx.ui.setStatus("cgs", `📊 ${settings.projectName || basename(ctx.cwd)}`);
+		ctx.ui.setStatus("cgs", `\u{1F4CA} ${settings.projectName || basename(ctx.cwd)}`);
 
 		// Clear status after 3 seconds
 		setTimeout(() => {
@@ -194,7 +207,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 	// Update status when agent starts
 	pi.on("agent_start", async (_event, ctx) => {
 		if (isAvailable) {
-			ctx.ui.setStatus("cgs", "📊");
+			ctx.ui.setStatus("cgs", "\u{1F4CA}");
 		}
 	});
 
