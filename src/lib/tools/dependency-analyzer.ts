@@ -8,6 +8,11 @@ import { MemgraphService } from '../graph-service.js';
 import { ResultRow } from '../types.js';
 import { CYPHER_DEFAULT_LIMIT, RelationshipType, NodeLabel } from '../constants.js';
 
+/** Replace $limit parameter in query with actual integer value (Memgraph requires integer for LIMIT) */
+function withLimit(query: string, limit: number): string {
+  return query.replace('$limit', String(Math.floor(limit)));
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -181,10 +186,9 @@ export class DependencyAnalyzer {
   ): Promise<DependencyNode[]> {
     logger.info(`[dependency-analyzer] Finding callers of: ${qualifiedNameOrName}`);
 
-    const results = await this.graphService.fetchAll(CYPHER_FIND_CALLERS, {
+    const results = await this.graphService.fetchAll(withLimit(CYPHER_FIND_CALLERS, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
       name: qualifiedNameOrName,
-      limit: limit ?? this.limit,
     });
 
     return this.mapToNodes(results, 'caller');
@@ -199,10 +203,9 @@ export class DependencyAnalyzer {
   ): Promise<DependencyNode[]> {
     logger.info(`[dependency-analyzer] Finding callees of: ${qualifiedNameOrName}`);
 
-    const results = await this.graphService.fetchAll(CYPHER_FIND_CALLEES, {
+    const results = await this.graphService.fetchAll(withLimit(CYPHER_FIND_CALLEES, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
       name: qualifiedNameOrName,
-      limit: limit ?? this.limit,
     });
 
     return this.mapToNodes(results, 'callee');
@@ -257,9 +260,8 @@ export class DependencyAnalyzer {
     const depth = maxDepth ?? this.maxDepth;
     const query = CYPHER_CALL_CHAIN_DEPTH.replace('$maxDepth', String(depth));
 
-    const results = await this.graphService.fetchAll(query, {
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
-      limit: limit ?? this.limit,
     });
 
     return this.mapToCallChains(results);
@@ -278,9 +280,8 @@ export class DependencyAnalyzer {
     const depth = maxDepth ?? this.maxDepth;
     const query = CYPHER_REVERSE_CALL_CHAIN.replace('$maxDepth', String(depth));
 
-    const results = await this.graphService.fetchAll(query, {
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
-      limit: limit ?? this.limit,
     });
 
     return this.mapToCallChains(results);
@@ -292,9 +293,7 @@ export class DependencyAnalyzer {
   async getDependencyStats(limit?: number): Promise<ResultRow[]> {
     logger.info('[dependency-analyzer] Getting dependency statistics');
 
-    return this.graphService.fetchAll(CYPHER_DEPENDENCY_STATS, {
-      limit: limit ?? this.limit,
-    });
+    return this.graphService.fetchAll(withLimit(CYPHER_DEPENDENCY_STATS, limit ?? this.limit), {});
   }
 
   /**
@@ -303,9 +302,7 @@ export class DependencyAnalyzer {
   async findHighlyConnected(limit?: number): Promise<ResultRow[]> {
     logger.info('[dependency-analyzer] Finding highly connected nodes');
 
-    return this.graphService.fetchAll(CYPHER_HIGHLY_CONNECTED, {
-      limit: limit ?? this.limit,
-    });
+    return this.graphService.fetchAll(withLimit(CYPHER_HIGHLY_CONNECTED, limit ?? this.limit), {});
   }
 
   /**
@@ -326,9 +323,7 @@ export class DependencyAnalyzer {
       LIMIT $limit
     `;
 
-    const results = await this.graphService.fetchAll(query, {
-      limit: limit ?? this.limit,
-    });
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {});
 
     return this.mapToCallChains(results);
   }
@@ -336,6 +331,7 @@ export class DependencyAnalyzer {
   /**
    * Find orphan functions (no callers or callees)
    */
+
   async findOrphanFunctions(limit?: number): Promise<DependencyNode[]> {
     logger.info('[dependency-analyzer] Finding orphan functions');
 
@@ -356,9 +352,7 @@ export class DependencyAnalyzer {
       LIMIT $limit
     `;
 
-    const results = await this.graphService.fetchAll(query, {
-      limit: limit ?? this.limit,
-    });
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {});
 
     return results.map(row => ({
       qualified_name: row.qualified_name as string,
