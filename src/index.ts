@@ -187,13 +187,6 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 	// Update status when agent starts
 	pi.on("agent_start", async (_event, ctx) => {
 		if (isAvailable) {
-			// Update project context if cwd changed
-			const manager = getServiceManager();
-			const { root } = manager.getProjectInfo();
-			if (root !== ctx.cwd) {
-				const settings = getSettings();
-				await manager.updateProjectContext(ctx.cwd, settings.projectName);
-			}
 			ctx.ui.setStatus("cgs", "📊");
 		}
 	});

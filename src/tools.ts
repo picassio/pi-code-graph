@@ -33,13 +33,10 @@ async function ensureServices(ctx: ExtensionContext): Promise<void> {
 			projectRoot: ctx.cwd,
 			projectName: settings.projectName || basename(ctx.cwd),
 		}, ctx);
-	} else {
-		// Update project context if cwd changed
-		const { root } = manager.getProjectInfo();
-		if (root !== ctx.cwd) {
-			await manager.updateProjectContext(ctx.cwd, getSettings().projectName);
-		}
 	}
+	// Note: don't auto-switch project context on cwd change.
+	// The user should explicitly set projectName in config or use index_repository
+	// to change the active project. This allows querying a project from any directory.
 }
 
 /**
