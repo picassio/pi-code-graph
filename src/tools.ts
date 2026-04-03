@@ -87,6 +87,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 			"Prefer query_code_graph over grep/find for structural questions like 'what calls this function', 'what classes inherit from X', 'what does this module export'",
 			"For finding code by what it does (semantic meaning), use semantic_code_search instead",
 			"After query_code_graph returns qualified names, use get_code_from_graph to retrieve the actual source code",
+			"Before using query tools, run index_repository first if you or the user have made code changes since the last index",
 		],
 		parameters: Type.Object({
 			query: Type.String({
@@ -233,6 +234,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use semantic_code_search when you need to find code by what it does, not by its name — e.g., 'code that validates email addresses' or 'error handling logic'",
 			"Prefer semantic_code_search over grep when you're unsure of naming conventions or want to find functionally similar code",
+			"Before using query tools, run index_repository first if you or the user have made code changes since the last index",
 		],
 		parameters: Type.Object({
 			query: Type.String({
@@ -331,6 +333,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use analyze_code_dependencies BEFORE refactoring or modifying a function/class to understand what code would break",
 			"Check 'dependents' direction to find all callers that would be affected by a signature change",
+			"Before using query tools, run index_repository first if you or the user have made code changes since the last index",
 		],
 		parameters: Type.Object({
 			target: Type.String({

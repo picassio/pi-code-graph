@@ -122,7 +122,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 				"### Important: Keep the index up to date",
 				"Before using query tools (`query_code_graph`, `semantic_code_search`, `analyze_code_dependencies`),",
 				"run `index_repository` first if you or the user have made code changes since the last index.",
-				"This ensures the graph and vector search reflect the latest code. The update is incremental -- only changed files are re-processed.",
+				"This ensures the graph and vector search reflect the latest code. The update is incremental \u2014 only changed files are re-processed.",
 			);
 
 			lines.push(
