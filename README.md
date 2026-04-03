@@ -1,6 +1,6 @@
 # pi-code-graph
 
-A native TypeScript extension for [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) that builds and queries **code knowledge graphs** — enabling AI agents to understand codebase structure, relationships, and dependencies.
+A native TypeScript extension for [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) that builds and queries **code knowledge graphs** — enabling AI agents to understand codebase structure, relationships, and dependencies before making changes.
 
 Ported from [code-graph-rag](https://github.com/picassio/code-graph-rag) (Python) to pure TypeScript. No Python dependency required.
 
@@ -8,307 +8,318 @@ Ported from [code-graph-rag](https://github.com/picassio/code-graph-rag) (Python
 
 ```
 You: "What functions call UserService.create_user?"
-Pi:  Uses query_code_graph → generates Cypher → queries Memgraph
-     → Returns: AuthController.register(), AdminAPI.bulk_create(), tests/test_users.py::test_create()
+Pi:  → query_code_graph → Cypher → Memgraph
+     → AuthController.register(), AdminAPI.bulk_create(), tests/test_users.py::test_create()
 
 You: "What would break if I change validate_input?"
-Pi:  Uses analyze_code_dependencies → finds all callers
-     → Returns: 12 functions across 5 modules depend on validate_input()
+Pi:  → analyze_code_dependencies → finds all callers
+     → 12 functions across 5 modules depend on validate_input()
 
 You: "Find code that handles email validation"
-Pi:  Uses semantic_code_search → vector similarity search
-     → Returns: utils/validators.py::validate_email(), models/user.py::User.set_email()
+Pi:  → semantic_code_search → embedding → zvec HNSW search
+     → utils/validators.py::validate_email(), models/user.py::User.set_email()
 ```
 
 ## Features
 
-- **🔍 Natural Language Queries** — Ask about code structure, relationships, call graphs
-- **🧠 Semantic Search** — Find code by meaning using embeddings (OpenAI/OpenRouter)
-- **🕸️ Dependency Analysis** — Understand callers, callees, and blast radius before refactoring
-- **📄 Source Retrieval** — Get source code by qualified name from the graph
-- **🌳 Multi-Language** — Python, TypeScript, JavaScript, Java, Rust, Go, C, C++ (via tree-sitter WASM)
-- **⚡ Incremental Indexing** — SHA-256 file hashing, only re-parses changed files
-- **🔐 Auto-Auth** — Uses pi's OAuth/API keys automatically (Anthropic, Google, OpenAI, OpenRouter)
-- **🐳 Docker Auto-Start** — Memgraph starts automatically with secure password generation
-- **🔒 Read-Only by Default** — Safe for multi-agent environments
+- **Natural Language Queries** — Ask about code structure, relationships, call graphs via LLM-generated Cypher
+- **Semantic Code Search** — Find code by meaning using vector embeddings ([zvec](https://github.com/alibaba/zvec) HNSW index)
+- **Dependency Analysis** — Understand callers, callees, and blast radius before refactoring
+- **Source Retrieval** — Get source code by qualified name directly from the graph
+- **Multi-Language** — Python, TypeScript, JavaScript, Java, Rust, Go, C++, C#, PHP (via tree-sitter WASM)
+- **Incremental Indexing** — SHA-256 file hashing, only re-parses changed files and re-embeds changed functions
+- **Multi-Project** — Index and query multiple projects in one Memgraph instance
+- **Auto-Auth** — Uses pi's OAuth/API keys automatically (OpenRouter, Google, OpenAI, Anthropic)
+- **Read-Only by Default** — Safe for multi-agent environments; indexing must be explicitly enabled
 
 ## Quick Start
 
+### 1. Install
+
 ```bash
-# Install the extension
+# As a pi package
 npm install pi-code-graph
 
-# Start pi — Memgraph auto-starts if Docker is available
+# Or clone for development
+git clone https://github.com/picassio/pi-code-graph
+```
+
+### 2. Setup
+
+```bash
 pi
+/cgs setup    # Guided wizard: starts Memgraph, configures LLM, indexes repo
+```
 
-# Configure (picks up your existing pi auth automatically)
-/cgs config
+Or manually:
+```bash
+/cgs docker start    # Start Memgraph via Docker Compose
+/cgs config          # Configure LLM provider + embedding model
+/cgs index           # Index the current repository
+```
 
-# Index your repository
-/cgs index
+### 3. Query
 
-# Query!
+The agent automatically uses the graph tools. You can also query directly:
+```bash
 /cgs query "What classes inherit from BaseService?"
 ```
 
-Or clone directly:
-
-```bash
-git clone https://github.com/picassio/pi-code-graph ~/.pi/agent/extensions/pi-code-graph
-cd ~/.pi/agent/extensions/pi-code-graph && npm install
-```
-
-## How It Works
+## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                        pi-code-graph                           │
-│                                                                │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────┐  │
-│  │   Tree-sitter    │  │   LLM Service    │  │  Embedding  │  │
-│  │   (WASM)         │  │  (Cypher gen)    │  │  Service    │  │
-│  │                  │  │                  │  │             │  │
-│  │  Parse code →    │  │  NL → Cypher     │  │  Code →     │  │
-│  │  AST → Graph     │  │  via Claude/     │  │  Vectors    │  │
-│  │  nodes & edges   │  │  Gemini/GPT      │  │  (OpenAI)   │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────┬──────┘  │
-│           │                     │                    │         │
-│           ▼                     ▼                    ▼         │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                    Memgraph (Bolt)                      │   │
-│  │  Nodes: Project, Module, Class, Function, Method, ...  │   │
-│  │  Edges: CALLS, IMPORTS, INHERITS, DEFINES, CONTAINS    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│           │                                      │             │
-│  ┌────────┴──────────┐              ┌────────────┴──────────┐  │
-│  │  Graph Queries    │              │  Vector Store (zvec)  │  │
-│  │  (Cypher)         │              │  (~/.cgs/vectors)     │  │
-│  └───────────────────┘              └───────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      pi-code-graph                          │
+│                                                             │
+│  ┌────────────────┐  ┌────────────────┐  ┌──────────────┐  │
+│  │  Tree-sitter   │  │  LLM Service   │  │  Embedding   │  │
+│  │  (WASM)        │  │ (Cypher gen)   │  │  Service     │  │
+│  │                │  │                │  │              │  │
+│  │ Parse → AST →  │  │ NL → Cypher   │  │ Code →       │  │
+│  │ graph nodes    │  │ via OpenRouter │  │ vectors      │  │
+│  └───────┬────────┘  └───────┬────────┘  └──────┬───────┘  │
+│          │                   │                   │          │
+│          ▼                   ▼                   ▼          │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              Memgraph (Bolt protocol)                │   │
+│  │  Nodes: Project, Module, Class, Function, Method     │   │
+│  │  Edges: CALLS, IMPORTS, INHERITS, DEFINES,           │   │
+│  │         DEFINES_METHOD, CONTAINS                     │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │           zvec (in-process vector DB)                │   │
+│  │  HNSW index, cosine similarity, per-project storage  │   │
+│  │  ~/.cgs/vectors/{project}/                           │   │
+│  └──────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### Graph Schema
+
+**Nodes:**
+- `Project` — top-level project container
+- `Package` — language package (e.g., npm package, Python package)
+- `Module` — source file as a module
+- `File`, `Folder` — file system structure
+- `Class`, `Interface`, `Enum`, `Type` — type definitions
+- `Function`, `Method` — callable code elements
+- `ExternalPackage` — third-party dependencies
+
+**Relationships:**
+- `CALLS` — function/method call edges (resolved via AST + type inference)
+- `DEFINES` — module defines a function/class
+- `DEFINES_METHOD` — class defines a method
+- `IMPORTS` — module imports from another module
+- `INHERITS` — class extends another class
+- `IMPLEMENTS` — class implements an interface
+- `CONTAINS_*` — structural containment (project→package→folder→file→module)
+- `DEPENDS_ON_EXTERNAL` — dependency on third-party package
 
 ### Indexing Pipeline
 
-1. **Tree-sitter** parses source files into ASTs (8 languages via WASM)
-2. **Graph Updater** extracts nodes (functions, classes, modules) and edges (calls, imports, inherits)
-3. Writes to **Memgraph** via Bolt protocol (neo4j-driver)
-4. **Embedding Service** generates vectors for semantic search (OpenAI text-embedding-3-small)
-5. Vectors stored in **zvec** (embedded HNSW index at `~/.cgs/vectors`)
+1. **File scan** — walks project, hashes files (SHA-256), compares against `~/.cgs/cache/{project}.json`
+2. **Tree-sitter** — parses changed files into ASTs (9 languages via WASM)
+3. **Definition extraction** — extracts Classes, Functions, Methods, Interfaces, Enums, Types
+4. **Call resolution** — resolves function calls to qualified names (handles `this.method()`, imports, builtins)
+5. **Graph write** — batched upserts to Memgraph via Bolt protocol (sequential to avoid transaction conflicts)
+6. **Embedding generation** — generates vectors for changed functions via OpenRouter/OpenAI API
+7. **Vector storage** — upserts into zvec HNSW index at `~/.cgs/vectors/{project}/`
 
 ### Query Pipeline
 
 1. User asks a natural language question
-2. **LLM Service** generates a Cypher query (using schema context + examples)
-3. Cypher runs against **Memgraph**
+2. **LLM** generates a read-only Cypher query (validated against dangerous keywords)
+3. Cypher executes against **Memgraph**
 4. Results formatted and returned to the agent
 
-## Tools (LLM-Callable)
+### Semantic Search Pipeline
+
+1. User describes what code does (e.g., "handles authentication")
+2. **Embedding Service** generates a query vector
+3. **zvec** performs HNSW nearest-neighbor search (cosine similarity)
+4. Results enriched with source code from disk
+
+## Tools
 
 Pi automatically discovers and uses these tools:
 
-| Tool | Description | When Pi Uses It |
-|------|-------------|-----------------|
-| `query_code_graph` | Natural language → Cypher → graph results | Understanding code structure, relationships, call graphs |
-| `get_code_from_graph` | Get source code by qualified name | After finding items via query, to see actual code |
-| `semantic_code_search` | Vector similarity search by meaning | Finding code by what it does, not its name |
-| `analyze_code_dependencies` | Callers/callees analysis | Before refactoring, to understand blast radius |
-| `list_graph_projects` | List indexed projects | Checking what's been indexed |
-| `index_repository` | Index/update the code graph | Setting up or refreshing the graph (must be enabled) |
+| Tool | Description | When the Agent Uses It |
+|------|-------------|----------------------|
+| `query_code_graph` | Natural language → Cypher → graph results | Understanding structure, relationships, call graphs |
+| `semantic_code_search` | Vector similarity search by meaning | Finding code by what it does, not by name |
+| `analyze_code_dependencies` | Callers/callees/blast radius analysis | Before refactoring — know what would break |
+| `get_code_from_graph` | Retrieve source code by qualified name | After finding items via query, read the actual code |
+| `list_graph_projects` | List all indexed projects | Checking what's available to query |
+| `index_repository` | Index/update the code graph | Keeping the graph up to date after code changes |
 
-### Pi Knows the Workflow
+### System Prompt Integration
 
-The extension injects context into pi's system prompt, so pi knows:
-- Whether the graph is set up or needs initialization
-- How to guide you through setup (`/cgs docker start` → `/cgs config` → index)
-- When to use graph tools vs regular file search
-- To check dependencies before suggesting refactors
+The extension injects context into pi's system prompt so the agent:
+- Knows the current project and available tools
+- Runs `index_repository` before querying if code has changed (incremental, fast)
+- Uses qualified name prefixes for cross-project queries
+- Checks dependencies before suggesting refactors
+
+## Incremental Updates
+
+The indexer tracks file changes via SHA-256 hashes stored at `~/.cgs/cache/{project}.json`.
+
+| What | Full Index | Incremental Update |
+|------|-----------|-------------------|
+| File scan | Hash all files | Hash all files |
+| Parsing | All source files | Only changed/new files |
+| Graph | Delete project + recreate | Delete changed modules + recreate |
+| Embeddings | All functions | Only functions from changed files |
+| Deleted files | N/A | Removed from graph automatically |
+
+```bash
+/cgs index           # Incremental (fast — only changed files)
+/cgs index --clean   # Full re-index (delete + rebuild everything)
+```
+
+## Multi-Project Support
+
+All projects share one Memgraph instance, separated by qualified name prefixes:
+
+```
+pi-code-graph.src.services.ServiceManager    → project: pi-code-graph
+pi-squad.src.scheduler.Scheduler             → project: pi-squad
+```
+
+Each project gets isolated storage:
+```
+~/.cgs/
+├── config.toml                    # Global settings
+├── cgs.log                        # Log file (no console output)
+├── cache/
+│   ├── pi-code-graph.json         # Hash cache
+│   └── pi-squad.json
+├── docker/
+│   └── docker-compose.yml         # Memgraph compose
+└── vectors/
+    ├── pi-code-graph/             # zvec HNSW index
+    └── pi-squad/
+```
+
+Index any project from anywhere:
+```bash
+# Index current directory
+/cgs index
+
+# Index a different project
+index_repository(project_root="/path/to/other-project")
+```
+
+Query across projects:
+```
+query_code_graph("classes where qualified_name starts with pi-squad")
+analyze_code_dependencies(target="Scheduler")   # finds it in pi-squad
+```
 
 ## Commands
 
-Single `/cgs` command with subcommands:
-
 | Command | Shortcut | Description |
 |---------|----------|-------------|
-| `/cgs config` | `/cgs c` | Interactive configuration (provider, model, embedding) |
-| `/cgs status` | `/cgs s` | Check Memgraph, LLM, embedding availability |
-| `/cgs query <q>` | `/cgs q` | Quick query from the command line |
+| `/cgs` | | Interactive menu |
+| `/cgs setup` | | Guided first-time setup (Docker, LLM, indexing) |
+| `/cgs config` | `/cgs c` | Configure LLM provider, embedding, Memgraph |
+| `/cgs status` | `/cgs s` | Check service availability |
+| `/cgs query <q>` | `/cgs q` | Quick graph query |
 | `/cgs index` | `/cgs i` | Index/update current repository |
-| `/cgs docker` | `/cgs d` | Manage Memgraph container |
-| `/cgs clear` | | Clear results widget |
+| `/cgs docker` | `/cgs d` | Manage Memgraph container (start/stop/restart/logs) |
+| `/cgs logs` | `/cgs l` | View extension log file |
 | `/cgs help` | `/cgs h` | Show help |
-
-### Docker Subcommands
-
-```bash
-/cgs docker status    # Show Docker/Memgraph status
-/cgs docker start     # Start Memgraph (auto-generates password)
-/cgs docker stop      # Stop Memgraph (data preserved)
-/cgs docker restart   # Restart Memgraph
-/cgs docker logs      # View Memgraph logs
-```
 
 ## Configuration
 
 ### Authentication (Automatic)
 
-**pi-code-graph uses pi's existing auth** — no separate API keys needed.
+pi-code-graph uses pi's existing auth — no separate API keys needed. If you're logged in via `/login`, it works automatically.
 
-If you're logged in to any provider via pi's `/login`, it's automatically available:
+Provider priority: **OpenRouter → Google → OpenAI → Anthropic → Ollama**
 
-| Provider | Auth Method | Default Model (LLM) |
-|----------|-------------|---------------------|
-| Anthropic | OAuth or API key | `claude-sonnet-4-20250514` |
-| Google | API key | `gemini-2.0-flash` |
-| OpenRouter | API key | `google/gemini-2.0-flash-001` |
-| OpenAI | API key | `gpt-4o-mini` |
-| Ollama | None (local) | `codellama` |
-
-You can choose which provider and model to use via `/cgs config`:
-
-```
-/cgs config → 🤖 LLM Provider → 🔄 Auto
-  → Choose Provider: anthropic 🔰 OAuth
-  → Choose Model: claude-sonnet-4-20250514
-```
-
-### Config File
-
-Settings persist to `~/.cgs/config.toml`:
+Configure via `/cgs config` or edit `~/.cgs/config.toml`:
 
 ```toml
 [llm]
 source = "auto"
-auto_provider = "anthropic"
-auto_model = "claude-sonnet-4-20250514"
+auto_provider = "openrouter"
+auto_model = "google/gemini-2.0-flash-001"
 
 [embedding]
 source = "auto"
-auto_provider = "openai"
-auto_model = "text-embedding-3-small"
+auto_provider = "openrouter"
+auto_model = "openai/text-embedding-3-small"
 
 [memgraph]
 host = "localhost"
 port = "7687"
-user = "memgraph"
-password = "xK9mL2pQrS5tU8vW"  # Auto-generated on first start
 
 [project]
-allow_index = false
+allow_index = true
 ```
 
-### Embedding Models
+### Docker (Memgraph)
 
-Embeddings power semantic code search. Configure via `/cgs config → Embedding`:
+The extension manages Memgraph via Docker Compose (`~/.cgs/docker/docker-compose.yml`):
 
-| Mode | Provider | How |
-|------|----------|-----|
-| **Auto** | Uses pi's auth | OpenAI or OpenRouter from pi's login |
-| **Manual** | OpenAI, OpenRouter, Ollama | Enter your own API key |
+- **memgraph/memgraph-mage** — graph database (port 7687)
+- **memgraph/lab** — web UI at http://localhost:23000 (port 23000)
 
-Default model: `text-embedding-3-small` (1536 dimensions, fast, good quality)
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CGR_ALLOW_INDEX` | `false` | Enable indexing tools for agents |
-| `CGR_PROJECT_NAME` | `<dirname>` | Project name in the graph |
-| `MEMGRAPH_HOST` | `localhost` | Memgraph host |
-| `MEMGRAPH_PORT` | `7687` | Memgraph port |
-
-## Safety: Read-Only by Default
-
-Indexing tools are **disabled by default**. This means agents can query the graph but cannot modify it.
-
-Enable indexing via:
-- `/cgs config` → Project Settings → Enable Indexing
-- Or: `CGR_ALLOW_INDEX=true`
-
-This is intentional for multi-agent environments where you want a stable graph indexed by CI/CD.
-
-## Multi-Agent Setup
-
-```
-┌─────────────────────────────────────────────────┐
-│                CI/CD Pipeline                    │
-│  index_repository on merge → Memgraph           │
-└──────────────────────┬──────────────────────────┘
-                       │
-       ┌───────────────┼───────────────┐
-       ▼               ▼               ▼
-  ┌─────────┐    ┌─────────┐    ┌─────────┐
-  │ Agent 1 │    │ Agent 2 │    │ Agent 3 │
-  │ READ    │    │ READ    │    │ READ    │
-  │ ONLY    │    │ ONLY    │    │ ONLY    │
-  └─────────┘    └─────────┘    └─────────┘
+```bash
+/cgs docker start    # Start both containers
+/cgs docker stop     # Stop (data preserved in Docker volumes)
+/cgs docker logs     # View Memgraph logs
 ```
 
 ## Supported Languages
 
-| Language | File Extensions | Parser |
-|----------|----------------|--------|
+| Language | Extensions | WASM Grammar |
+|----------|-----------|-------------|
 | Python | `.py` | tree-sitter-python |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript |
 | JavaScript | `.js`, `.jsx`, `.mjs` | tree-sitter-javascript |
 | Java | `.java` | tree-sitter-java |
 | Rust | `.rs` | tree-sitter-rust |
 | Go | `.go` | tree-sitter-go |
-| C | `.c`, `.h` | tree-sitter-c |
 | C++ | `.cpp`, `.hpp`, `.cc`, `.cxx` | tree-sitter-cpp |
+| C# | `.cs` | tree-sitter-c-sharp |
+| PHP | `.php` | tree-sitter-php |
+
+All grammars loaded via `@vscode/tree-sitter-wasm` — no native compilation needed.
+
+## Safety: Read-Only by Default
+
+Indexing is **disabled by default**. Agents can query the graph but cannot modify it.
+
+Enable via:
+- `/cgs config` → Project Settings → Enable Indexing
+- `/cgs setup` (offers to enable during guided setup)
+- `CGR_ALLOW_INDEX=true` environment variable
+
+This is intentional for multi-agent environments where you want a stable graph.
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+npm install          # Install dependencies
+npm run check        # Type check (tsc --noEmit)
+npm test             # Run tests (289 tests)
+npm run test:watch   # Watch mode
 
-# Type check
-npm run check
-
-# Run tests (289 tests)
-npm test
-
-# Watch mode
-npm run test:watch
+# Link for local development with pi
+# Add to ~/.pi/agent/settings.json packages:
+#   "../../path/to/pi-code-graph"
 ```
-
-## Troubleshooting
-
-### "Memgraph not reachable"
-
-```bash
-# Auto-start via extension
-/cgs docker start
-
-# Or manually
-docker run -d --name cgr-memgraph -p 7687:7687 -p 3000:3000 memgraph/memgraph-platform
-```
-
-### "No results found"
-
-The repository needs to be indexed first:
-```bash
-/cgs config    # Enable indexing under Project Settings
-/cgs index     # Index the repository
-```
-
-### "Indexing is disabled"
-
-This is by design. Enable via `/cgs config` → Project Settings → Enable Indexing.
-
-### Query returns wrong results
-
-The LLM generates Cypher queries from natural language. Try:
-- Being more specific: "Find functions named `validate_*` in the auth module"
-- Using semantic search for fuzzy queries: "find email validation code"
-- Running `/cgs status` to check which LLM model is being used
 
 ## Tech Stack
 
-- **[web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm-build)** — WASM-based code parsing (8 languages)
-- **[neo4j-driver](https://github.com/neo4j/neo4j-javascript-driver)** — Bolt protocol for Memgraph
-- **[zvec](https://github.com/nicolo-ribaudo/zvec)** — Embedded HNSW vector index
-- **[Memgraph](https://memgraph.com/)** — In-memory graph database
+- **[Memgraph](https://memgraph.com/)** — in-memory graph database (Bolt protocol)
+- **[zvec](https://github.com/alibaba/zvec)** — in-process vector database (HNSW, by Alibaba)
+- **[web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm-build)** — WASM-based code parsing
+- **[neo4j-driver](https://github.com/neo4j/neo4j-javascript-driver)** — Bolt protocol client
+- **[@vscode/tree-sitter-wasm](https://github.com/nicolo-ribaudo/vscode-tree-sitter-wasm)** — pre-built WASM grammars
 
 ## License
 
@@ -316,5 +327,7 @@ MIT
 
 ## Credits
 
-- [code-graph-rag](https://github.com/picassio/code-graph-rag) by [@picassio](https://github.com/picassio) — Original Python implementation
-- [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) — The coding agent platform
+- [code-graph-rag](https://github.com/vitali87/code-graph-rag) by [@vitali87](https://github.com/vitali87) — original code-graph-rag concept and implementation
+- [code-graph-rag](https://github.com/picassio/code-graph-rag) by [@picassio](https://github.com/picassio) — enhanced Python implementation (forked from vitali87)
+- [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) — the coding agent platform
+- [zvec](https://github.com/alibaba/zvec) — vector database engine
