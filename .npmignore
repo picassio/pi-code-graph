@@ -1,0 +1,23 @@
+# Dev/test files
+__tests__/
+*.test.ts
+*.spec.ts
+coverage/
+.nyc_output/
+vitest.config.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*

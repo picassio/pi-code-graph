@@ -1,0 +1,73 @@
+{
+  "name": "pi-code-graph",
+  "version": "0.1.0",
+  "description": "Code Graph RAG extension for pi-coding-agent - query codebase knowledge graphs for intelligent code understanding",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "clean": "rm -rf node_modules"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "code-graph-rag",
+    "rag",
+    "knowledge-graph",
+    "codebase",
+    "memgraph"
+  ],
+  "author": "picassio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/picassio/pi-code-graph"
+  },
+  "homepage": "https://github.com/picassio/pi-code-graph#readme",
+  "bugs": {
+    "url": "https://github.com/picassio/pi-code-graph/issues"
+  },
+  "files": [
+    "src/",
+    "tsconfig.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "@vscode/tree-sitter-wasm": "^0.3.0",
+    "@zvec/zvec": "^0.2.3",
+    "neo4j-driver": "^6.0.1",
+    "web-tree-sitter": "^0.26.8"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "^0.34.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.2",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.2"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
