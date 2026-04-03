@@ -1108,8 +1108,13 @@ export class GraphUpdater {
         // Embedding text: qualifiedName + code snippet (truncated)
         const embeddingText = `${qualifiedName}\n${codeSnippet.slice(0, 500)}`;
 
+        // zvec doc IDs max 64 chars — hash if too long
+        const docId = qualifiedName.length <= 64
+          ? qualifiedName
+          : createHash('sha256').update(qualifiedName).digest('hex').slice(0, 16) + '_' + qualifiedName.slice(-47);
+
         docs.push({
-          id: qualifiedName,
+          id: docId,
           code: embeddingText,
           qualifiedName,
           filePath,
