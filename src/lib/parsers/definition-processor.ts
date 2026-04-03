@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Definition processor for extracting function/class definitions
  * Ported from codebase_rag/parsers/definition_processor.py
@@ -74,12 +75,12 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     const relativePath = relative(this.repoPath, filePath);
     const fileName = basename(filePath);
 
-    console.info(`Parsing ${language} AST: ${relativePath}`);
+    logger.info(`Parsing ${language} AST: ${relativePath}`);
 
     try {
       const langQueries = queries.get(language);
       if (!langQueries) {
-        console.warn(`Unsupported language ${language} for ${filePath}`);
+        logger.warn(`Unsupported language ${language} for ${filePath}`);
         return null;
       }
 
@@ -122,13 +123,13 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
 
       return [rootNode, language];
     } catch (error) {
-      console.error(`Failed to parse ${filePath}:`, error);
+      logger.error(`Failed to parse ${filePath}:`, error);
       return null;
     }
   }
 
   async processDependencies(filepath: string): Promise<void> {
-    console.info(`Parsing dependency file: ${filepath}`);
+    logger.info(`Parsing dependency file: ${filepath}`);
 
     try {
       const dependencies = await this.parseDependencyFile(filepath);
@@ -137,7 +138,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         this.addDependency(dep.name, dep.spec, dep.properties);
       }
     } catch (error) {
-      console.error(`Failed to parse dependencies from ${filepath}:`, error);
+      logger.error(`Failed to parse dependencies from ${filepath}:`, error);
     }
   }
 
@@ -198,7 +199,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, funcQn]
       );
 
-      console.debug(`Found function: ${funcQn}`);
+      logger.debug(`Found function: ${funcQn}`);
     }
   }
 
@@ -279,7 +280,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         );
       }
 
-      console.debug(`Found class: ${classQn}`);
+      logger.debug(`Found class: ${classQn}`);
 
       // Process methods inside the class
       await this.ingestMethodsInClass(classNode, classQn, moduleQn, language, queries);
@@ -341,7 +342,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, methodQn]
       );
 
-      console.debug(`Found method: ${methodQn}`);
+      logger.debug(`Found method: ${methodQn}`);
     }
   }
 
@@ -696,7 +697,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
       return;
     }
 
-    console.info(`Found dependency: ${depName} (${depSpec})`);
+    logger.info(`Found dependency: ${depName} (${depSpec})`);
 
     this.ingestor.ensureNodeBatch(cs.NodeLabel.EXTERNAL_PACKAGE, {
       [cs.KEY_NAME]: depName,

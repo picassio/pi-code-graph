@@ -3,6 +3,9 @@
  * TypeScript port of codebase_rag for pi-coding-agent
  */
 
+// Export logger
+export { logger, setLogLevel, getLogLevel, type LogLevel } from './logger.js';
+
 // Export all types
 export * from './types.js';
 

@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 /**
  * Graph updater with incremental indexing support
  * Ported from codebase_rag/graph_updater.py
@@ -522,12 +523,12 @@ export async function loadHashCache(cachePath: string): Promise<FileHashCache> {
     const content = await readFile(cachePath, 'utf-8');
     const data = JSON.parse(content);
     if (typeof data === 'object' && data !== null) {
-      console.info(`[graph-updater] Loaded hash cache: ${Object.keys(data).length} entries from ${cachePath}`);
+      logger.info(`[graph-updater] Loaded hash cache: ${Object.keys(data).length} entries from ${cachePath}`);
       return data as FileHashCache;
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`[graph-updater] Failed to load hash cache from ${cachePath}:`, error);
+      logger.warn(`[graph-updater] Failed to load hash cache from ${cachePath}:`, error);
     }
   }
   return {};
@@ -540,9 +541,9 @@ export async function saveHashCache(cachePath: string, hashes: FileHashCache): P
   try {
     const content = JSON.stringify(hashes, null, 2);
     await writeFile(cachePath, content, 'utf-8');
-    console.info(`[graph-updater] Saved hash cache: ${Object.keys(hashes).length} entries to ${cachePath}`);
+    logger.info(`[graph-updater] Saved hash cache: ${Object.keys(hashes).length} entries to ${cachePath}`);
   } catch (error) {
-    console.warn(`[graph-updater] Failed to save hash cache to ${cachePath}:`, error);
+    logger.warn(`[graph-updater] Failed to save hash cache to ${cachePath}:`, error);
   }
 }
 
@@ -645,14 +646,14 @@ export class GraphUpdater {
 
     // Ensure project node exists
     this.ingestor.ensureNodeBatch(cs.NodeLabel.PROJECT, { [cs.KEY_NAME]: this.projectName });
-    console.info(`[graph-updater] Ensuring project: ${this.projectName}`);
+    logger.info(`[graph-updater] Ensuring project: ${this.projectName}`);
 
     // Pass 1: Identify structure (packages, folders)
-    console.info('[graph-updater] Pass 1: Identifying structure...');
+    logger.info('[graph-updater] Pass 1: Identifying structure...');
     await this.factory.getStructureProcessor().identifyStructure();
 
     // Pass 2: Process files
-    console.info('[graph-updater] Pass 2: Processing files...');
+    logger.info('[graph-updater] Pass 2: Processing files...');
     await this.processFiles(force);
 
     // Resolve any deferred operations
@@ -660,14 +661,14 @@ export class GraphUpdater {
     if (definitionProcessor.resolveDeferredCppMethods) {
       const corrected = await definitionProcessor.resolveDeferredCppMethods();
       if (corrected > 0) {
-        console.info(`[graph-updater] Resolved ${corrected} deferred C++ out-of-class methods`);
+        logger.info(`[graph-updater] Resolved ${corrected} deferred C++ out-of-class methods`);
       }
     }
 
-    console.info(`[graph-updater] Found ${this.functionRegistry.size} functions/methods`);
+    logger.info(`[graph-updater] Found ${this.functionRegistry.size} functions/methods`);
 
     // Pass 3: Process function calls
-    console.info('[graph-updater] Pass 3: Processing function calls...');
+    logger.info('[graph-updater] Pass 3: Processing function calls...');
     await this.processFunctionCalls();
 
     // Process method overrides
@@ -675,7 +676,7 @@ export class GraphUpdater {
       await definitionProcessor.processAllMethodOverrides();
     }
 
-    console.info('[graph-updater] Analysis complete');
+    logger.info('[graph-updater] Analysis complete');
     await this.flushIngestor();
 
     // Prune orphan nodes
@@ -683,7 +684,7 @@ export class GraphUpdater {
 
     // Pass 4: Generate embeddings (if enabled)
     if (this.enableEmbeddings) {
-      console.info('[graph-updater] Pass 4: Generating embeddings...');
+      logger.info('[graph-updater] Pass 4: Generating embeddings...');
       await this.generateSemanticEmbeddings();
     }
   }
@@ -692,12 +693,12 @@ export class GraphUpdater {
    * Remove a file from internal state (for incremental updates)
    */
   removeFileFromState(filePath: string): void {
-    console.debug(`[graph-updater] Removing state for: ${filePath}`);
+    logger.debug(`[graph-updater] Removing state for: ${filePath}`);
 
     // Remove from AST cache
     if (this.astCache.has(filePath)) {
       this.astCache.delete(filePath);
-      console.debug('[graph-updater] Removed from AST cache');
+      logger.debug('[graph-updater] Removed from AST cache');
     }
 
     // Calculate module qualified name prefix
@@ -720,7 +721,7 @@ export class GraphUpdater {
     }
 
     if (qnsToRemove.size > 0) {
-      console.debug(`[graph-updater] Removed ${qnsToRemove.size} qualified names from registry`);
+      logger.debug(`[graph-updater] Removed ${qnsToRemove.size} qualified names from registry`);
     }
   }
 
@@ -839,7 +840,7 @@ export class GraphUpdater {
     const oldHashes = force ? {} : await loadHashCache(cachePath);
 
     if (force) {
-      console.info('[graph-updater] Force mode: ignoring hash cache');
+      logger.info('[graph-updater] Force mode: ignoring hash cache');
     }
 
     const eligibleFiles = await this.collectEligibleFiles();
@@ -860,14 +861,14 @@ export class GraphUpdater {
       try {
         currentHash = await hashFile(filepath);
       } catch (error) {
-        console.warn(`[graph-updater] Failed to hash ${fileKey}:`, error);
+        logger.warn(`[graph-updater] Failed to hash ${fileKey}:`, error);
         continue;
       }
       newHashes[fileKey] = currentHash;
 
       // Check if file has changed
       if (!force && fileKey in oldHashes && oldHashes[fileKey] === currentHash) {
-        console.debug(`[graph-updater] Unchanged: ${fileKey}`);
+        logger.debug(`[graph-updater] Unchanged: ${fileKey}`);
         skippedCount++;
         this.onProgress?.(i + 1, eligibleFiles.length, `Skipped (unchanged): ${fileKey}`);
         continue;
@@ -875,10 +876,10 @@ export class GraphUpdater {
 
       // File is new or changed
       if (fileKey in oldHashes) {
-        console.debug(`[graph-updater] Changed: ${fileKey}`);
+        logger.debug(`[graph-updater] Changed: ${fileKey}`);
         this.removeFileFromState(filepath);
       } else {
-        console.debug(`[graph-updater] New: ${fileKey}`);
+        logger.debug(`[graph-updater] New: ${fileKey}`);
       }
 
       changedCount++;
@@ -886,7 +887,7 @@ export class GraphUpdater {
 
       processedSinceFlush++;
       if (processedSinceFlush >= this.flushInterval) {
-        console.info(`[graph-updater] Periodic flush after ${processedSinceFlush} files`);
+        logger.info(`[graph-updater] Periodic flush after ${processedSinceFlush} files`);
         await this.flushIngestor();
         processedSinceFlush = 0;
       }
@@ -897,7 +898,7 @@ export class GraphUpdater {
     // Handle deleted files
     const deletedKeys = Object.keys(oldHashes).filter((k) => !currentFileKeys.has(k));
     if (deletedKeys.length > 0) {
-      console.info(`[graph-updater] ${deletedKeys.length} files deleted`);
+      logger.info(`[graph-updater] ${deletedKeys.length} files deleted`);
       for (const deletedKey of deletedKeys) {
         const deletedPath = join(this.repoPath, deletedKey);
         this.removeFileFromState(deletedPath);
@@ -910,10 +911,10 @@ export class GraphUpdater {
     }
 
     if (skippedCount > 0) {
-      console.info(`[graph-updater] Skipped ${skippedCount} unchanged files`);
+      logger.info(`[graph-updater] Skipped ${skippedCount} unchanged files`);
     }
     if (changedCount > 0) {
-      console.info(`[graph-updater] Processed ${changedCount} changed files`);
+      logger.info(`[graph-updater] Processed ${changedCount} changed files`);
     }
 
     // Save updated hash cache
@@ -982,7 +983,7 @@ export class GraphUpdater {
       return;
     }
 
-    console.info('[graph-updater] Pruning orphan nodes...');
+    logger.info('[graph-updater] Pruning orphan nodes...');
     let totalPruned = 0;
 
     const projectPrefix = `${this.projectName}.`;
@@ -1029,9 +1030,9 @@ export class GraphUpdater {
       }
 
       if (orphans.length > 0) {
-        console.info(`[graph-updater] Found ${orphans.length} orphan ${label} nodes`);
+        logger.info(`[graph-updater] Found ${orphans.length} orphan ${label} nodes`);
         for (const orphanPath of orphans) {
-          console.debug(`[graph-updater] Deleting orphan ${label}: ${orphanPath}`);
+          logger.debug(`[graph-updater] Deleting orphan ${label}: ${orphanPath}`);
           await this.ingestor.executeWrite(deleteQuery, { [cs.KEY_PATH]: orphanPath });
         }
         totalPruned += orphans.length;
@@ -1039,9 +1040,9 @@ export class GraphUpdater {
     }
 
     if (totalPruned > 0) {
-      console.info(`[graph-updater] Pruned ${totalPruned} total orphan nodes`);
+      logger.info(`[graph-updater] Pruned ${totalPruned} total orphan nodes`);
     } else {
-      console.info('[graph-updater] No orphan nodes found');
+      logger.info('[graph-updater] No orphan nodes found');
     }
   }
 
@@ -1051,7 +1052,7 @@ export class GraphUpdater {
   private async generateSemanticEmbeddings(): Promise<void> {
     // This would integrate with the embeddings service
     // Placeholder for now - actual implementation would use embeddings.ts
-    console.info('[graph-updater] Embedding generation not yet implemented in TypeScript port');
+    logger.info('[graph-updater] Embedding generation not yet implemented in TypeScript port');
   }
 
   /**
@@ -1118,7 +1119,7 @@ export async function createGraphUpdaterWithLanguages(
       const langQueries = await getQueries(lang);
       queries.set(lang, langQueries);
     } catch (error) {
-      console.warn(`[graph-updater] Failed to load queries for ${lang}:`, error);
+      logger.warn(`[graph-updater] Failed to load queries for ${lang}:`, error);
     }
   }
 

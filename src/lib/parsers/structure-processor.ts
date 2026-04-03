@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Structure processor for identifying code structure (packages, folders, files)
  * Ported from codebase_rag/parsers/structure_processor.py
@@ -138,7 +139,7 @@ export class StructureProcessor implements StructureProcessorProtocol {
         const packageQn = this.buildQualifiedName(relativeRoot);
         this.structuralElements.set(relativeRoot, packageQn);
 
-        console.info(`Identified package: ${packageQn}`);
+        logger.info(`Identified package: ${packageQn}`);
 
         this.ingestor.ensureNodeBatch(cs.NodeLabel.PACKAGE, {
           [cs.KEY_QUALIFIED_NAME]: packageQn,
@@ -157,7 +158,7 @@ export class StructureProcessor implements StructureProcessorProtocol {
         // Regular folder
         this.structuralElements.set(relativeRoot, null);
 
-        console.info(`Identified folder: ${relativeRoot}`);
+        logger.info(`Identified folder: ${relativeRoot}`);
 
         this.ingestor.ensureNodeBatch(cs.NodeLabel.FOLDER, {
           [cs.KEY_PATH]: relativeRoot,
@@ -218,7 +219,7 @@ export class StructureProcessor implements StructureProcessorProtocol {
         await this.collectDirectories(fullPath, directories);
       }
     } catch (error) {
-      console.warn(`Failed to read directory ${root}:`, error);
+      logger.warn(`Failed to read directory ${root}:`, error);
     }
   }
 

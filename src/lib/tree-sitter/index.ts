@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Tree-sitter parser initialization and management
  * Provides async initialization, language loading, and query compilation
@@ -210,7 +211,7 @@ export async function loadAllLanguages(): Promise<Map<SupportedLanguage, Languag
       const loaded = await loadLanguage(lang);
       results.set(lang, loaded);
     } catch (error) {
-      console.warn(`Failed to load ${lang}: ${error}`);
+      logger.warn(`Failed to load ${lang}: ${error}`);
     }
   });
 
@@ -281,7 +282,7 @@ export async function compileQuery(language: SupportedLanguage, queryString: str
   try {
     return new Query(lang, queryString);
   } catch (error) {
-    console.warn(`Failed to compile query for ${language}: ${error}`);
+    logger.warn(`Failed to compile query for ${language}: ${error}`);
     return null;
   }
 }
@@ -327,7 +328,7 @@ export async function loadAllQueries(): Promise<Map<SupportedLanguage, LanguageQ
       const queries = await getQueries(lang);
       results.set(lang, queries);
     } catch (error) {
-      console.warn(`Failed to load queries for ${lang}: ${error}`);
+      logger.warn(`Failed to load queries for ${lang}: ${error}`);
     }
   });
 

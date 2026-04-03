@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Import processor for parsing import statements across languages
  * Ported from codebase_rag/parsers/import_processor.py
@@ -150,7 +151,7 @@ export class ImportProcessor implements ImportProcessorProtocol {
         );
       }
     } catch (error) {
-      console.warn(`Failed to parse imports for ${moduleQn}:`, error);
+      logger.warn(`Failed to parse imports for ${moduleQn}:`, error);
     }
   }
 
@@ -767,7 +768,7 @@ export class ImportProcessor implements ImportProcessorProtocol {
     // Generic fallback - just log that we can't parse imports for this language
     const importNodes = captures[cs.CAPTURE_IMPORT] ?? [];
     for (const importNode of importNodes) {
-      console.debug(`Generic import parsing not implemented for ${config.language}:`, importNode.type);
+      logger.debug(`Generic import parsing not implemented for ${config.language}:`, importNode.type);
     }
   }
 

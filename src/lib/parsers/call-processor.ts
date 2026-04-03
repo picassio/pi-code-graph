@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Call processor for extracting function calls from code
  * Ported from codebase_rag/parsers/call_processor.py
@@ -296,7 +297,7 @@ export class CallProcessor implements CallProcessorProtocol {
     queries: Map<SupportedLanguage, LanguageQueries>
   ): void {
     const relativePath = relative(this.repoPath, filePath);
-    console.debug(`Processing calls in: ${relativePath}`);
+    logger.debug(`Processing calls in: ${relativePath}`);
 
     try {
       const fileName = basename(filePath);
@@ -311,7 +312,7 @@ export class CallProcessor implements CallProcessorProtocol {
       // Process module-level calls
       this.processModuleLevelCalls(rootNode, moduleQn, language, queries);
     } catch (error) {
-      console.error(`Failed to process calls in ${filePath}:`, error);
+      logger.error(`Failed to process calls in ${filePath}:`, error);
     }
   }
 
@@ -449,7 +450,7 @@ export class CallProcessor implements CallProcessorProtocol {
     const captures = this.extractCaptures(matches);
     const callNodes = captures[cs.CAPTURE_CALL] ?? [];
 
-    console.debug(`Found ${callNodes.length} call nodes in ${callerQn}`);
+    logger.debug(`Found ${callNodes.length} call nodes in ${callerQn}`);
 
     for (const callNode of callNodes) {
       const callName = this.getCallTargetName(callNode);
@@ -489,11 +490,11 @@ export class CallProcessor implements CallProcessorProtocol {
 
       // Skip constructor calls (treated as class references)
       if (calleeType === NodeLabel.CLASS) {
-        console.debug(`Skipping class constructor call: ${callName} -> ${calleeQn}`);
+        logger.debug(`Skipping class constructor call: ${callName} -> ${calleeQn}`);
         continue;
       }
 
-      console.debug(`Found call: ${callerQn} -> ${calleeQn} (${calleeType})`);
+      logger.debug(`Found call: ${callerQn} -> ${calleeQn} (${calleeType})`);
 
       // Create CALLS relationship
       this.ingestor.ensureRelationshipBatch(

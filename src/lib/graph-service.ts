@@ -1,3 +1,5 @@
+import { logger } from './logger.js';
+
 /**
  * Memgraph graph service using neo4j-driver (Bolt protocol)
  * Ported from codebase_rag/services/graph_service.py
@@ -104,19 +106,19 @@ class Logger {
   }
 
   debug(msg: string, ...args: unknown[]): void {
-    if (this.shouldLog('debug')) console.debug(`[graph] ${msg}`, ...args);
+    if (this.shouldLog('debug')) logger.debug(`[graph] ${msg}`, ...args);
   }
 
   info(msg: string, ...args: unknown[]): void {
-    if (this.shouldLog('info')) console.info(`[graph] ${msg}`, ...args);
+    if (this.shouldLog('info')) logger.info(`[graph] ${msg}`, ...args);
   }
 
   warn(msg: string, ...args: unknown[]): void {
-    if (this.shouldLog('warn')) console.warn(`[graph] ${msg}`, ...args);
+    if (this.shouldLog('warn')) logger.warn(`[graph] ${msg}`, ...args);
   }
 
   error(msg: string, ...args: unknown[]): void {
-    if (this.shouldLog('error')) console.error(`[graph] ${msg}`, ...args);
+    if (this.shouldLog('error')) logger.error(`[graph] ${msg}`, ...args);
   }
 }
 

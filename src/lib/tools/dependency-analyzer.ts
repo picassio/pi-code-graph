@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Dependency Analyzer Tool - Analyze callers/callees relationships
  * Provides tools for analyzing code dependencies through the knowledge graph
@@ -168,7 +169,7 @@ export class DependencyAnalyzer {
     this.graphService = config.graphService;
     this.maxDepth = config.maxDepth ?? 5;
     this.limit = config.limit ?? CYPHER_DEFAULT_LIMIT;
-    console.debug('[dependency-analyzer] Initialized');
+    logger.debug('[dependency-analyzer] Initialized');
   }
 
   /**
@@ -178,7 +179,7 @@ export class DependencyAnalyzer {
     qualifiedNameOrName: string,
     limit?: number
   ): Promise<DependencyNode[]> {
-    console.info(`[dependency-analyzer] Finding callers of: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding callers of: ${qualifiedNameOrName}`);
 
     const results = await this.graphService.fetchAll(CYPHER_FIND_CALLERS, {
       qualified_name: qualifiedNameOrName,
@@ -196,7 +197,7 @@ export class DependencyAnalyzer {
     qualifiedNameOrName: string,
     limit?: number
   ): Promise<DependencyNode[]> {
-    console.info(`[dependency-analyzer] Finding callees of: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding callees of: ${qualifiedNameOrName}`);
 
     const results = await this.graphService.fetchAll(CYPHER_FIND_CALLEES, {
       qualified_name: qualifiedNameOrName,
@@ -211,7 +212,7 @@ export class DependencyAnalyzer {
    * Get full dependency information for a node
    */
   async analyzeDependencies(qualifiedNameOrName: string): Promise<DependencyResult | null> {
-    console.info(`[dependency-analyzer] Analyzing dependencies for: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Analyzing dependencies for: ${qualifiedNameOrName}`);
 
     // Find the target node
     const targetResults = await this.graphService.fetchAll(CYPHER_FIND_NODE_BY_NAME, {
@@ -220,7 +221,7 @@ export class DependencyAnalyzer {
     });
 
     if (!targetResults || targetResults.length === 0) {
-      console.warn(`[dependency-analyzer] Node not found: ${qualifiedNameOrName}`);
+      logger.warn(`[dependency-analyzer] Node not found: ${qualifiedNameOrName}`);
       return null;
     }
 
@@ -251,7 +252,7 @@ export class DependencyAnalyzer {
     maxDepth?: number,
     limit?: number
   ): Promise<CallChain[]> {
-    console.info(`[dependency-analyzer] Finding call chains from: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding call chains from: ${qualifiedNameOrName}`);
 
     const depth = maxDepth ?? this.maxDepth;
     const query = CYPHER_CALL_CHAIN_DEPTH.replace('$maxDepth', String(depth));
@@ -272,7 +273,7 @@ export class DependencyAnalyzer {
     maxDepth?: number,
     limit?: number
   ): Promise<CallChain[]> {
-    console.info(`[dependency-analyzer] Finding reverse call chains to: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding reverse call chains to: ${qualifiedNameOrName}`);
 
     const depth = maxDepth ?? this.maxDepth;
     const query = CYPHER_REVERSE_CALL_CHAIN.replace('$maxDepth', String(depth));
@@ -289,7 +290,7 @@ export class DependencyAnalyzer {
    * Get dependency statistics (most called, most calling)
    */
   async getDependencyStats(limit?: number): Promise<ResultRow[]> {
-    console.info('[dependency-analyzer] Getting dependency statistics');
+    logger.info('[dependency-analyzer] Getting dependency statistics');
 
     return this.graphService.fetchAll(CYPHER_DEPENDENCY_STATS, {
       limit: limit ?? this.limit,
@@ -300,7 +301,7 @@ export class DependencyAnalyzer {
    * Find highly connected nodes (potential core functions)
    */
   async findHighlyConnected(limit?: number): Promise<ResultRow[]> {
-    console.info('[dependency-analyzer] Finding highly connected nodes');
+    logger.info('[dependency-analyzer] Finding highly connected nodes');
 
     return this.graphService.fetchAll(CYPHER_HIGHLY_CONNECTED, {
       limit: limit ?? this.limit,
@@ -311,7 +312,7 @@ export class DependencyAnalyzer {
    * Find circular dependencies (if any)
    */
   async findCircularDependencies(limit?: number): Promise<CallChain[]> {
-    console.info('[dependency-analyzer] Finding circular dependencies');
+    logger.info('[dependency-analyzer] Finding circular dependencies');
 
     const query = `
       MATCH path = (n)-[:CALLS*2..${this.maxDepth}]->(n)
@@ -336,7 +337,7 @@ export class DependencyAnalyzer {
    * Find orphan functions (no callers or callees)
    */
   async findOrphanFunctions(limit?: number): Promise<DependencyNode[]> {
-    console.info('[dependency-analyzer] Finding orphan functions');
+    logger.info('[dependency-analyzer] Finding orphan functions');
 
     const query = `
       MATCH (n)
@@ -442,7 +443,7 @@ export async function analyzeDependencies(
   input: DependencyAnalyzerToolInput,
   analyzer: DependencyAnalyzer
 ): Promise<DependencyAnalyzerToolResult> {
-  console.info(`[dependency-analyzer] Tool called: ${input.analysis_type} for ${input.qualified_name}`);
+  logger.info(`[dependency-analyzer] Tool called: ${input.analysis_type} for ${input.qualified_name}`);
 
   try {
     switch (input.analysis_type) {

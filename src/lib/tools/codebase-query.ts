@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Codebase Query Tool - Natural language queries to the knowledge graph
  * Ported from codebase_rag/tools/codebase_query.py
@@ -143,7 +144,7 @@ export class CodebaseQueryTool {
     naturalLanguageQuery: string
   ): Promise<QueryGraphData> {
     if (this.verbose) {
-      console.info(`[codebase-query] Received query: ${naturalLanguageQuery}`);
+      logger.info(`[codebase-query] Received query: ${naturalLanguageQuery}`);
     }
 
     let cypherQuery = QUERY_NOT_AVAILABLE;
@@ -153,7 +154,7 @@ export class CodebaseQueryTool {
       cypherQuery = await this.cypherGenerator.generate(naturalLanguageQuery);
 
       if (this.verbose) {
-        console.info(`[codebase-query] Generated Cypher: ${cypherQuery}`);
+        logger.info(`[codebase-query] Generated Cypher: ${cypherQuery}`);
       }
 
       // Execute the query
@@ -189,10 +190,10 @@ export class CodebaseQueryTool {
 
       // Log results table if verbose
       if (this.verbose && truncatedResults.length > 0) {
-        console.info('[codebase-query] Results:');
+        logger.info('[codebase-query] Results:');
         console.table(truncatedResults.slice(0, 10));
         if (truncatedResults.length > 10) {
-          console.info(`  ... and ${truncatedResults.length - 10} more rows`);
+          logger.info(`  ... and ${truncatedResults.length - 10} more rows`);
         }
       }
 
@@ -203,7 +204,7 @@ export class CodebaseQueryTool {
       };
     } catch (error) {
       if (error instanceof LLMGenerationError) {
-        console.error(`[codebase-query] LLM generation error:`, error.message);
+        logger.error(`[codebase-query] LLM generation error:`, error.message);
         return {
           query_used: QUERY_NOT_AVAILABLE,
           results: [],
@@ -212,7 +213,7 @@ export class CodebaseQueryTool {
         };
       }
 
-      console.error(`[codebase-query] Query error:`, error);
+      logger.error(`[codebase-query] Query error:`, error);
       return {
         query_used: cypherQuery,
         results: [],
@@ -227,7 +228,7 @@ export class CodebaseQueryTool {
    */
   async executeRawQuery(cypherQuery: string): Promise<QueryGraphData> {
     if (this.verbose) {
-      console.info(`[codebase-query] Executing raw Cypher: ${cypherQuery}`);
+      logger.info(`[codebase-query] Executing raw Cypher: ${cypherQuery}`);
     }
 
     try {
@@ -294,7 +295,7 @@ export async function queryCodebaseGraph(
   input: CodebaseQueryToolInput,
   tool: CodebaseQueryTool
 ): Promise<CodebaseQueryToolResult> {
-  console.info(`[codebase-query] Tool called with: ${input.natural_language_query}`);
+  logger.info(`[codebase-query] Tool called with: ${input.natural_language_query}`);
 
   try {
     const data = await tool.queryCodebaseKnowledgeGraph(input.natural_language_query);

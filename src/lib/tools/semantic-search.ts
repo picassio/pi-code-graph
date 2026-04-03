@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Semantic Search Tool - Embedding-based code search
  * Ported from codebase_rag/tools/semantic_search.py
@@ -71,7 +72,7 @@ export class SemanticSearchTool {
     this.projectName = config.projectName;
     this.graphService = config.graphService;
     this.embeddingService = config.embeddingService;
-    console.debug(`[semantic-search] Initialized for project: ${this.projectName}`);
+    logger.debug(`[semantic-search] Initialized for project: ${this.projectName}`);
   }
 
   /**
@@ -79,12 +80,12 @@ export class SemanticSearchTool {
    */
   async buildIndex(): Promise<void> {
     if (this.indexingInProgress) {
-      console.warn('[semantic-search] Indexing already in progress');
+      logger.warn('[semantic-search] Indexing already in progress');
       return;
     }
 
     this.indexingInProgress = true;
-    console.info('[semantic-search] Building embedding index...');
+    logger.info('[semantic-search] Building embedding index...');
 
     try {
       // Query all functions/methods from the graph
@@ -93,7 +94,7 @@ export class SemanticSearchTool {
       });
 
       if (!results || results.length === 0) {
-        console.warn('[semantic-search] No functions/methods found for indexing');
+        logger.warn('[semantic-search] No functions/methods found for indexing');
         this.embeddingIndex = {
           nodeIds: [],
           embeddings: [],
@@ -132,12 +133,12 @@ export class SemanticSearchTool {
             codeSnippets.push(embeddingText);
           } catch {
             // Skip files that can't be read
-            console.debug(`[semantic-search] Skipping unreadable file: ${path}`);
+            logger.debug(`[semantic-search] Skipping unreadable file: ${path}`);
           }
         }
       }
 
-      console.info(`[semantic-search] Generating embeddings for ${codeSnippets.length} code snippets...`);
+      logger.info(`[semantic-search] Generating embeddings for ${codeSnippets.length} code snippets...`);
 
       // Generate embeddings in batches
       const embeddings = await this.embeddingService.embedCodeBatch(codeSnippets);
@@ -152,7 +153,7 @@ export class SemanticSearchTool {
         nodeIdToIndex,
       };
 
-      console.info(`[semantic-search] Index built with ${nodeIds.length} entries`);
+      logger.info(`[semantic-search] Index built with ${nodeIds.length} entries`);
     } finally {
       this.indexingInProgress = false;
     }
@@ -169,10 +170,10 @@ export class SemanticSearchTool {
    * Search for code using natural language query
    */
   async search(query: string, topK: number = 5): Promise<SemanticSearchResult[]> {
-    console.info(`[semantic-search] Searching for: "${query}" (top ${topK})`);
+    logger.info(`[semantic-search] Searching for: "${query}" (top ${topK})`);
 
     if (!this.embeddingIndex || this.embeddingIndex.nodeIds.length === 0) {
-      console.warn('[semantic-search] Index not built or empty');
+      logger.warn('[semantic-search] Index not built or empty');
       return [];
     }
 
@@ -215,10 +216,10 @@ export class SemanticSearchTool {
         });
       }
 
-      console.info(`[semantic-search] Found ${results.length} results for: "${query}"`);
+      logger.info(`[semantic-search] Found ${results.length} results for: "${query}"`);
       return results;
     } catch (error) {
-      console.error('[semantic-search] Search error:', error);
+      logger.error('[semantic-search] Search error:', error);
       return [];
     }
   }
@@ -253,7 +254,7 @@ export class SemanticSearchTool {
         metadata.set(nodeId, { name, type });
       }
     } catch (error) {
-      console.error('[semantic-search] Error fetching node metadata:', error);
+      logger.error('[semantic-search] Error fetching node metadata:', error);
     }
 
     return metadata;
@@ -270,7 +271,7 @@ export class SemanticSearchTool {
       );
 
       if (!results || results.length === 0) {
-        console.warn(`[semantic-search] Node ${nodeId} not found`);
+        logger.warn(`[semantic-search] Node ${nodeId} not found`);
         return null;
       }
 
@@ -280,7 +281,7 @@ export class SemanticSearchTool {
       const endLine = row.end_line as number | null;
 
       if (!filePath || startLine === null || endLine === null) {
-        console.warn(`[semantic-search] Incomplete location for node ${nodeId}`);
+        logger.warn(`[semantic-search] Incomplete location for node ${nodeId}`);
         return null;
       }
 
@@ -290,7 +291,7 @@ export class SemanticSearchTool {
       
       return lines.slice(startLine - 1, endLine).join('\n');
     } catch (error) {
-      console.error(`[semantic-search] Error getting source for node ${nodeId}:`, error);
+      logger.error(`[semantic-search] Error getting source for node ${nodeId}:`, error);
       return null;
     }
   }
@@ -352,7 +353,7 @@ export async function semanticSearchFunctions(
   input: SemanticSearchToolInput,
   tool: SemanticSearchTool
 ): Promise<SemanticSearchToolResult> {
-  console.info(`[semantic-search] Tool called with query: "${input.query}"`);
+  logger.info(`[semantic-search] Tool called with query: "${input.query}"`);
 
   try {
     // Ensure index is ready
@@ -390,7 +391,7 @@ export async function getFunctionSource(
   nodeId: number,
   tool: SemanticSearchTool
 ): Promise<{ success: boolean; source_code?: string; error?: string }> {
-  console.info(`[semantic-search] Getting source for node: ${nodeId}`);
+  logger.info(`[semantic-search] Getting source for node: ${nodeId}`);
 
   try {
     const source = await tool.getSourceCode(nodeId);
@@ -487,7 +488,7 @@ export async function createSemanticSearchToolWithDefaults(
   const embeddingService = config.embeddingService || await getEmbeddingService(config.projectRoot);
 
   if (!embeddingService) {
-    console.warn('[semantic-search] No embedding service available. Set OPENAI_API_KEY or OPENROUTER_API_KEY.');
+    logger.warn('[semantic-search] No embedding service available. Set OPENAI_API_KEY or OPENROUTER_API_KEY.');
     return null;
   }
 

@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 /**
  * API-based embeddings service for code-graph-rag
  * Uses OpenAI/OpenRouter APIs for embedding generation
@@ -155,7 +156,7 @@ export class EmbeddingCache {
       );
       this.dirty = false;
     } catch (error) {
-      console.warn(`Failed to save embedding cache to ${this.cachePath}:`, error);
+      logger.warn(`Failed to save embedding cache to ${this.cachePath}:`, error);
     }
   }
 
@@ -176,10 +177,10 @@ export class EmbeddingCache {
         this.cache.set(hash, embedding);
       }
 
-      console.debug(`Loaded ${this.cache.size} embeddings from cache: ${this.cachePath}`);
+      logger.debug(`Loaded ${this.cache.size} embeddings from cache: ${this.cachePath}`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`Failed to load embedding cache from ${this.cachePath}:`, error);
+        logger.warn(`Failed to load embedding cache from ${this.cachePath}:`, error);
       }
       this.cache.clear();
     }
@@ -316,7 +317,7 @@ export class EmbeddingService {
           // Check if retryable
           if (this.isRetryableError(response.status) && attempt < this.config.retryCount - 1) {
             const delay = this.config.retryDelayMs * Math.pow(2, attempt);
-            console.warn(`Embedding API error (${response.status}), retrying in ${delay}ms...`);
+            logger.warn(`Embedding API error (${response.status}), retrying in ${delay}ms...`);
             await this.sleep(delay);
             continue;
           }
@@ -331,7 +332,7 @@ export class EmbeddingService {
         // Retry on network errors
         if (attempt < this.config.retryCount - 1) {
           const delay = this.config.retryDelayMs * Math.pow(2, attempt);
-          console.warn(`Embedding request failed, retrying in ${delay}ms:`, (error as Error).message);
+          logger.warn(`Embedding request failed, retrying in ${delay}ms:`, (error as Error).message);
           await this.sleep(delay);
         }
       }
@@ -379,7 +380,7 @@ export class EmbeddingService {
 
     // If all are cached, return immediately
     if (cachedResults.size === snippets.length) {
-      console.debug(`All ${snippets.length} embeddings from cache`);
+      logger.debug(`All ${snippets.length} embeddings from cache`);
       return snippets.map((_, i) => cachedResults.get(i)!);
     }
 
@@ -394,7 +395,7 @@ export class EmbeddingService {
       }
     }
 
-    console.debug(`Fetching ${uncachedSnippets.length} embeddings (${cachedResults.size} cached)`);
+    logger.debug(`Fetching ${uncachedSnippets.length} embeddings (${cachedResults.size} cached)`);
 
     // Fetch uncached embeddings in batches
     const allNewEmbeddings: number[][] = [];
@@ -413,7 +414,7 @@ export class EmbeddingService {
       // Progress logging for large batches
       if (uncachedSnippets.length > batchSize) {
         const progress = Math.min(start + batchSize, uncachedSnippets.length);
-        console.debug(`Embedded ${progress}/${uncachedSnippets.length} snippets`);
+        logger.debug(`Embedded ${progress}/${uncachedSnippets.length} snippets`);
       }
     }
 

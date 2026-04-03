@@ -1,3 +1,4 @@
+import { logger } from '../logger.js';
 /**
  * Code Retrieval Tool - Get code by qualified name
  * Ported from codebase_rag/tools/code_retrieval.py
@@ -50,14 +51,14 @@ export class CodeRetriever {
   constructor(config: CodeRetrieverConfig) {
     this.projectRoot = resolve(config.projectRoot);
     this.graphService = config.graphService;
-    console.debug(`[code-retrieval] Initialized with root: ${this.projectRoot}`);
+    logger.debug(`[code-retrieval] Initialized with root: ${this.projectRoot}`);
   }
 
   /**
    * Find and return source code for a given qualified name
    */
   async findCodeSnippet(qualifiedName: string): Promise<CodeSnippet> {
-    console.debug(`[code-retrieval] Searching for: ${qualifiedName}`);
+    logger.debug(`[code-retrieval] Searching for: ${qualifiedName}`);
 
     try {
       const results = await this.graphService.fetchAll(
@@ -129,7 +130,7 @@ export class CodeRetriever {
         found: true,
       };
     } catch (error) {
-      console.error(`[code-retrieval] Error retrieving ${qualifiedName}:`, error);
+      logger.error(`[code-retrieval] Error retrieving ${qualifiedName}:`, error);
       return {
         qualified_name: qualifiedName,
         source_code: '',
@@ -183,7 +184,7 @@ export class CodeRetriever {
 
       return this.findCodeSnippet(qualifiedName);
     } catch (error) {
-      console.error(`[code-retrieval] Error finding by node ID ${nodeId}:`, error);
+      logger.error(`[code-retrieval] Error finding by node ID ${nodeId}:`, error);
       return null;
     }
   }
@@ -210,7 +211,7 @@ export async function getCodeSnippet(
   input: CodeRetrievalToolInput,
   retriever: CodeRetriever
 ): Promise<CodeRetrievalToolResult> {
-  console.info(`[code-retrieval] Tool called for: ${input.qualified_name}`);
+  logger.info(`[code-retrieval] Tool called for: ${input.qualified_name}`);
   
   try {
     const snippet = await retriever.findCodeSnippet(input.qualified_name);
