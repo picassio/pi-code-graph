@@ -557,7 +557,7 @@ export function registerIndexingTools(pi: ExtensionAPI): void {
 				}
 
 				// Run the indexing
-				await updater.run();
+				await updater.run(params.clean);
 				
 				if (signal?.aborted) {
 					return { content: [{ type: "text", text: "Indexing cancelled" }], details: {} };

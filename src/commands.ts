@@ -536,7 +536,7 @@ async function handleIndex(ctx: ExtensionContext, args: string): Promise<void> {
 			},
 		});
 
-		await updater.run();
+		await updater.run(clean);
 
 		ctx.ui.setStatus("cgs", undefined);
 		ctx.ui.notify(`Repository indexed successfully as "${projectName}"`, "info");
