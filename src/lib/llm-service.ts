@@ -1001,7 +1001,7 @@ export function detectAvailableProviders(): LLMProvider[] {
  * Get the best available provider (preference order)
  */
 export function getBestAvailableProvider(): LLMProvider | null {
-  const preferenceOrder: LLMProvider[] = ['anthropic', 'openai', 'openrouter', 'google', 'ollama'];
+  const preferenceOrder: LLMProvider[] = ['openrouter', 'google', 'openai', 'anthropic', 'ollama'];
 
   for (const provider of preferenceOrder) {
     if (provider === 'ollama') {

@@ -44,6 +44,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 		description: "Code Graph RAG - /cgs <command> [args]. Commands: config, status, query, index, docker, help",
 		getArgumentCompletions: (prefix) => {
 			const subs = [
+				{ value: "setup", label: "setup", description: "Guided first-time setup (Docker, LLM, indexing)" },
 				{ value: "config", label: "config", description: "Configure extension (LLM, embedding, Memgraph)" },
 				{ value: "status", label: "status", description: "Check Memgraph, LLM, embedding availability" },
 				{ value: "query", label: "query", description: "Query the code graph" },
@@ -61,6 +62,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 			if (!subcommand) {
 				// Show interactive menu when no args provided
 				const choice = await ctx.ui.select("Code Graph RAG", [
+					"🚀 Setup — Guided first-time setup",
 					"⚙️  Config — Configure LLM, embedding, Memgraph",
 					"📊 Status — Check service availability",
 					"🔍 Query — Query the code graph",
@@ -71,6 +73,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 				if (!choice) return;
 
 				const menuMap: Record<string, string> = {
+					"🚀 Setup — Guided first-time setup": "setup",
 					"⚙️  Config — Configure LLM, embedding, Memgraph": "config",
 					"📊 Status — Check service availability": "status",
 					"🔍 Query — Query the code graph": "query",
@@ -83,6 +86,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 
 				// Dispatch to the selected subcommand
 				switch (mapped) {
+					case "setup": await handleSetup(pi, ctx); return;
 					case "config": await handleConfig(pi, ctx); return;
 					case "status": await handleStatus(ctx); return;
 					case "query": await handleQuery(ctx, ""); return;
@@ -93,6 +97,10 @@ export function registerCommands(pi: ExtensionAPI): void {
 			}
 
 			switch (subcommand) {
+				case "setup":
+					await handleSetup(pi, ctx);
+					break;
+
 				case "config":
 				case "c":
 					await handleConfig(pi, ctx);
@@ -137,6 +145,228 @@ export function registerCommands(pi: ExtensionAPI): void {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Subcommand Handlers
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * /cgs setup - Guided first-time setup
+ */
+async function handleSetup(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const settings = getSettings();
+
+	ctx.ui.notify(
+		"Code Graph RAG — Setup\n\n" +
+		"This will walk you through setting up Memgraph, LLM, and indexing.\n" +
+		"You can re-run this anytime with /cgs setup.",
+		"info",
+	);
+
+	// ── Step 1: Docker / Memgraph ────────────────────────────────────────────
+	ctx.ui.setStatus("cgs", "Checking Memgraph...");
+	const mgStatus = await checkMemgraphConnectivity(
+		settings.memgraphHost,
+		parseInt(settings.memgraphPort, 10),
+	);
+	ctx.ui.setStatus("cgs", undefined);
+
+	if (mgStatus.available) {
+		ctx.ui.notify("✓ Memgraph is already running and reachable.", "info");
+	} else {
+		// Check Docker
+		const dockerStatus = getDockerStatus();
+
+		if (!dockerStatus.installed) {
+			ctx.ui.notify(
+				"Docker is not installed.\n\n" +
+				"Memgraph requires Docker. Please install Docker first:\n" +
+				"  https://docs.docker.com/get-docker/\n\n" +
+				"Then re-run /cgs setup.",
+				"error",
+			);
+			return;
+		}
+
+		if (!dockerStatus.composeInstalled) {
+			ctx.ui.notify(
+				"Docker Compose is not installed.\n\n" +
+				"Please install Docker Compose, then re-run /cgs setup.",
+				"error",
+			);
+			return;
+		}
+
+		if (dockerStatus.memgraphRunning) {
+			ctx.ui.notify("Memgraph container is running but not reachable. Check /cgs docker logs.", "warning");
+		} else {
+			const startConfirm = await ctx.ui.confirm(
+				"Start Memgraph",
+				"Memgraph is not running. Start it now via Docker Compose?\n\n" +
+				"This will create and start a Memgraph container.",
+			);
+
+			if (!startConfirm) {
+				ctx.ui.notify("Setup cancelled. Run /cgs setup when ready.", "info");
+				return;
+			}
+
+			ctx.ui.setStatus("cgs", "Starting Memgraph...");
+			const startResult = await startMemgraph();
+
+			if (!startResult.success) {
+				ctx.ui.setStatus("cgs", undefined);
+				ctx.ui.notify(`Failed to start Memgraph: ${startResult.error}`, "error");
+				return;
+			}
+
+			ctx.ui.setStatus("cgs", "Waiting for Memgraph...");
+			const healthy = await waitForMemgraph(30000);
+			ctx.ui.setStatus("cgs", undefined);
+
+			if (healthy) {
+				ctx.ui.notify("✓ Memgraph started and ready!", "info");
+			} else {
+				ctx.ui.notify(
+					"Memgraph started but not yet healthy. It may need a moment.\n" +
+					"Check /cgs docker logs if it doesn't come up.",
+					"warning",
+				);
+			}
+		}
+	}
+
+	// ── Step 2: LLM Provider ─────────────────────────────────────────────────
+	const credStatus = await hasValidCredentials(ctx);
+	const currentSettings = getSettings();
+
+	if (credStatus.valid && currentSettings.llmSource !== "auto") {
+		// Already explicitly configured
+		ctx.ui.notify(`✓ LLM provider configured: ${credStatus.provider}`, "info");
+	} else {
+		// Auto-detect: check available providers, prefer OpenRouter
+		const available = await getAvailableProviders(ctx);
+		const openrouterProvider = available.find(p => p.provider === "openrouter");
+
+		if (openrouterProvider) {
+			// OpenRouter key found — offer model selection
+			const orModels = [
+				"google/gemini-2.0-flash-001 (recommended, fast & cheap)",
+				"anthropic/claude-sonnet-4-20250514",
+				"openai/gpt-4o-mini",
+				"google/gemini-2.5-pro-preview-03-25",
+				"anthropic/claude-3.5-haiku-20241022",
+				"Custom...",
+			];
+
+			const modelChoice = await ctx.ui.select(
+				"OpenRouter API key found. Choose LLM model for code graph queries:",
+				orModels,
+			);
+
+			let selectedModel = "google/gemini-2.0-flash-001";
+			if (modelChoice === "Custom...") {
+				const custom = await ctx.ui.input("OpenRouter model ID", "google/gemini-2.0-flash-001");
+				if (custom) selectedModel = custom;
+			} else if (modelChoice) {
+				selectedModel = modelChoice.split(" (")[0]; // strip description
+			}
+
+			updateSettings({
+				llmSource: "auto",
+				autoProvider: "openrouter",
+				autoModel: selectedModel,
+			});
+			saveSettings(ctx);
+			ctx.ui.notify(`✓ LLM: OpenRouter → ${selectedModel}`, "info");
+		} else if (available.length > 0) {
+			// Other provider available
+			const first = available[0];
+			ctx.ui.notify(`✓ LLM provider auto-detected: ${first.provider}`, "info");
+			updateSettings({
+				llmSource: "auto",
+				autoProvider: first.provider as CGRSettings["autoProvider"],
+			});
+			saveSettings(ctx);
+		} else {
+			// No provider found — offer manual config
+			const configureLlm = await ctx.ui.confirm(
+				"Configure LLM",
+				"No LLM API key found. Configure one now?\n\n" +
+				"An LLM is needed for natural-language code graph queries.\n" +
+				"Tip: /login openrouter to add an OpenRouter API key.",
+			);
+
+			if (configureLlm) {
+				await configureLLMSetup(pi, ctx);
+			}
+		}
+	}
+
+	// ── Step 3: Initialize services ──────────────────────────────────────────
+	try {
+		const updatedSettings = getSettings();
+		const mgRecheck = await checkMemgraphConnectivity(
+			updatedSettings.memgraphHost,
+			parseInt(updatedSettings.memgraphPort, 10),
+		);
+
+		if (mgRecheck.available) {
+			const manager = getServiceManager();
+			await manager.initialize({
+				memgraphHost: updatedSettings.memgraphHost,
+				memgraphPort: parseInt(updatedSettings.memgraphPort, 10),
+				projectRoot: ctx.cwd,
+				projectName: updatedSettings.projectName || basename(ctx.cwd),
+			}, ctx);
+		}
+	} catch (err) {
+		// Non-fatal, services can be initialized later
+		console.warn(`[pi-code-graph] Failed to initialize services during setup: ${err}`);
+	}
+
+	// ── Step 4: Offer to index ───────────────────────────────────────────────
+	const updatedSettings2 = getSettings();
+	const indexEnabled = updatedSettings2.allowIndex || process.env.CGR_ALLOW_INDEX === "true";
+
+	if (!indexEnabled) {
+		const enableIndex = await ctx.ui.confirm(
+			"Enable Indexing",
+			"Indexing is currently disabled. Enable it so agents can index the codebase?\n\n" +
+			"⚠️ Only enable in single-agent environments.",
+		);
+
+		if (enableIndex) {
+			updateSettings({ allowIndex: true });
+			saveSettings(ctx);
+		}
+	}
+
+	const finalSettings = getSettings();
+	if (finalSettings.allowIndex) {
+		const doIndex = await ctx.ui.confirm(
+			"Index Repository",
+			`Index the current repository "${finalSettings.projectName || basename(ctx.cwd)}" now?\n\n` +
+			"This may take several minutes for large codebases.",
+		);
+
+		if (doIndex) {
+			await handleIndex(ctx, "");
+		}
+	}
+
+	// ── Done ─────────────────────────────────────────────────────────────────
+	ctx.ui.notify(
+		"Setup complete!\n\n" +
+		"Use /cgs status to check service availability.\n" +
+		"Use /cgs config to change settings anytime.\n" +
+		"Use /cgs docker start|stop to manage Memgraph.",
+		"info",
+	);
+}
+
+/**
+ * LLM configuration helper for the setup flow (delegates to configureLLM)
+ */
+async function configureLLMSetup(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	await configureLLM(pi, ctx);
+}
 
 /**
  * /cgs status - Check availability and configuration
@@ -467,6 +697,7 @@ async function handleHelp(ctx: ExtensionContext): Promise<void> {
 		"Code Graph RAG — /cgs",
 		"",
 		"/cgs              Interactive menu",
+		"/cgs setup        Guided first-time setup (Docker, LLM, indexing)",
 		"/cgs config (c)   Configure LLM, embedding, Memgraph",
 		"/cgs status (s)   Check service availability",
 		"/cgs query (q)    Query the code graph",

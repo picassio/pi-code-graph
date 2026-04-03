@@ -397,10 +397,10 @@ describe('Factory Functions', () => {
       process.env.OPENAI_API_KEY = 'test-key';
 
       const provider = getBestAvailableProvider();
-      // Provider order is: anthropic, openai, openrouter, google, ollama
-      // If anthropic is available from pi auth, it will be returned first
+      // Provider order is: openrouter, google, openai, anthropic, ollama
+      // If openrouter/google is available from pi auth, it will be returned first
       // Otherwise openai should be returned
-      expect(['anthropic', 'openai']).toContain(provider);
+      expect(['openrouter', 'google', 'openai']).toContain(provider);
     });
 
     it('should return null when no providers available', () => {

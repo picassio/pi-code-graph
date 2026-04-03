@@ -41,7 +41,7 @@ import { registerQueryTools, registerIndexingTools } from "./tools.js";
 import { registerCommands } from "./commands.js";
 import { hasValidCredentials } from "./auth.js";
 import { loadFromEnvironment, loadSettingsFromFile, getSettings, getConfigFilePath } from "./settings.js";
-import { getDockerStatus, startMemgraph, waitForMemgraph } from "./docker.js";
+
 
 // Track availability state
 let isAvailable = false;
@@ -97,10 +97,9 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 				"",
 				"### Setup Required",
 				"The code graph is not yet initialized. To set up:",
-				"1. Ensure Memgraph is running: user can run `/cgs docker start`",
-				"2. Configure LLM provider: user can run `/cgs config`",
-				"3. Index the repository: use the `index_repository` tool" + (indexingEnabled ? "" : " (user must enable indexing first via `/cgs config` → Project Settings)"),
-				"4. Then use `query_code_graph`, `semantic_code_search`, `analyze_code_dependencies` to explore",
+				"1. Run `/cgs setup` for guided first-time setup (starts Memgraph, configures LLM, indexes repo)",
+				"   Or manually: `/cgs docker start`, `/cgs config`, `/cgs index`",
+				"2. Then use `query_code_graph`, `semantic_code_search`, `analyze_code_dependencies` to explore",
 			);
 		} else {
 			lines.push(
@@ -118,7 +117,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 		}
 
 		lines.push("");
-		lines.push("User commands: `/cgs config` (settings), `/cgs status` (check), `/cgs docker` (manage Memgraph), `/cgs index` (index repo), `/cgs query` (quick query)");
+		lines.push("User commands: `/cgs setup` (first-time setup), `/cgs config` (settings), `/cgs status` (check), `/cgs docker` (manage Memgraph), `/cgs index` (index repo), `/cgs query` (quick query)");
 
 		return {
 			systemPrompt: _event.systemPrompt + lines.join("\n"),
@@ -132,56 +131,20 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 		const settings = getSettings();
 
 		// Check Memgraph connectivity using native library
-		let mgStatus = await checkMemgraphConnectivity(
+		const mgStatus = await checkMemgraphConnectivity(
 			settings.memgraphHost,
 			parseInt(settings.memgraphPort, 10)
 		);
 		
 		if (!mgStatus.available) {
-			// Check if Docker is available and try to auto-start Memgraph
-			const dockerStatus = getDockerStatus();
-			
-			if (dockerStatus.installed && dockerStatus.composeInstalled && !dockerStatus.memgraphRunning) {
-				// Auto-start Memgraph
-				ctx.ui.setStatus("cgs", "Starting Memgraph...");
-				const startResult = await startMemgraph();
-				
-				if (startResult.success) {
-					// Wait for it to be ready
-					ctx.ui.setStatus("cgs", "Waiting for Memgraph...");
-					const ready = await waitForMemgraph(20000);
-					ctx.ui.setStatus("cgs", undefined);
-					
-					if (ready) {
-						// Re-check connectivity
-						mgStatus = await checkMemgraphConnectivity(
-							settings.memgraphHost,
-							parseInt(settings.memgraphPort, 10)
-						);
-						if (mgStatus.available) {
-							ctx.ui.notify("Memgraph auto-started successfully.", "info");
-						}
-					}
-				} else {
-					ctx.ui.setStatus("cgs", undefined);
-				}
-			}
-			
-			// Still not available after auto-start attempt
-			if (!mgStatus.available) {
-				isAvailable = false;
-				lastCheckError = mgStatus.error || "Memgraph not reachable";
+			isAvailable = false;
+			lastCheckError = mgStatus.error || "Memgraph not reachable";
 
-				const hint = dockerStatus.installed 
-					? "Run /cgs docker start to start Memgraph"
-					: "Install Docker and run: docker run -d -p 7687:7687 memgraph/memgraph";
-
-				ctx.ui.notify(
-					`Code Graph RAG: Memgraph not reachable at ${settings.memgraphHost}:${settings.memgraphPort}.\n\n${hint}`,
-					"warning",
-				);
-				return;
-			}
+			ctx.ui.notify(
+				`Code Graph RAG: Memgraph not reachable at ${settings.memgraphHost}:${settings.memgraphPort}.\n\nRun /cgs setup for guided first-time setup, or /cgs docker start to start Memgraph.`,
+				"warning",
+			);
+			return;
 		}
 
 		// Check for LLM credentials (uses pi's auth system)

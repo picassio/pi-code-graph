@@ -51,10 +51,10 @@ const DEFAULT_ENDPOINTS: Record<string, string | undefined> = {
 	openrouter: "https://openrouter.ai/api/v1",
 };
 
-/** Provider search order */
+/** Provider search order — OpenRouter first since it supports many models */
 const PROVIDER_ORDER = [
-	{ pi: "google", cgr: "google" },
 	{ pi: "openrouter", cgr: "openrouter" },
+	{ pi: "google", cgr: "google" },
 	{ pi: "openai", cgr: "openai" },
 	{ pi: "anthropic", cgr: "anthropic" },
 ];
