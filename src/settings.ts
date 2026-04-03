@@ -8,7 +8,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import * as TOML from "@iarna/toml";
 
 /** Config directory path */
@@ -43,8 +42,6 @@ export interface CGRSettings {
 	// Memgraph Configuration
 	memgraphHost: string;
 	memgraphPort: string;
-	memgraphUser: string;
-	memgraphPassword?: string;
 
 	// Project Configuration
 	projectName?: string;
@@ -67,8 +64,6 @@ const DEFAULT_SETTINGS: CGRSettings = {
 	// Memgraph defaults
 	memgraphHost: "localhost",
 	memgraphPort: "7687",
-	memgraphUser: "memgraph",
-	memgraphPassword: undefined,
 
 	// Project defaults
 	allowIndex: false,
@@ -172,8 +167,6 @@ interface TOMLConfig {
 	memgraph?: {
 		host?: string;
 		port?: string;
-		user?: string;
-		password?: string;
 	};
 	project?: {
 		name?: string;
@@ -203,8 +196,6 @@ export function saveSettingsToFile(): { success: boolean; error?: string } {
 			memgraph: {
 				host: currentSettings.memgraphHost,
 				port: currentSettings.memgraphPort,
-				user: currentSettings.memgraphUser,
-				password: currentSettings.memgraphPassword,
 			},
 			project: {
 				allow_index: currentSettings.allowIndex,
@@ -339,12 +330,6 @@ export function loadSettingsFromFile(): { success: boolean; error?: string } {
 			if (config.memgraph.port) {
 				currentSettings.memgraphPort = config.memgraph.port;
 			}
-			if (config.memgraph.user) {
-				currentSettings.memgraphUser = config.memgraph.user;
-			}
-			if (config.memgraph.password) {
-				currentSettings.memgraphPassword = config.memgraph.password;
-			}
 		}
 
 		// Apply project settings
@@ -380,37 +365,6 @@ export function getConfigDir(): string {
 	return CGR_CONFIG_DIR;
 }
 
-/**
- * Generate a secure random password
- */
-export function generateSecurePassword(length: number = 24): string {
-	// Use URL-safe base64 characters (no special chars that might cause issues)
-	const bytes = randomBytes(length);
-	return bytes.toString('base64').replace(/[+/=]/g, '').slice(0, length);
-}
 
-/**
- * Ensure Memgraph password is set (generate if not exists)
- * Returns true if a new password was generated
- */
-export function ensureMemgraphPassword(): boolean {
-	if (currentSettings.memgraphPassword) {
-		return false; // Already has password
-	}
-
-	// Generate a new password
-	currentSettings.memgraphPassword = generateSecurePassword();
-	return true;
-}
-
-/**
- * Get Memgraph credentials
- */
-export function getMemgraphCredentials(): { user: string; password: string | undefined } {
-	return {
-		user: currentSettings.memgraphUser,
-		password: currentSettings.memgraphPassword,
-	};
-}
 
 

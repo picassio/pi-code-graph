@@ -192,6 +192,7 @@ export class MemgraphService {
   private nodeBuffer: Array<{ label: string; properties: PropertyDict }> = [];
   private relGroups: Map<string, RelBatchRow[]> = new Map();
   private relCount = 0;
+  private flushPromise: Promise<void> | null = null;
 
   // Pattern metadata for relationship flushing
   private patternMeta: Map<string, RelPattern> = new Map();
@@ -359,23 +360,33 @@ export class MemgraphService {
   ): Promise<void> {
     if (paramsList.length === 0) return;
 
-    const session = this.getSession('WRITE');
-    try {
-      await session.run(wrapWithUnwind(query), { batch: paramsList });
-    } catch (err) {
-      const errStr = String(err).toLowerCase();
-      if (!errStr.includes(ERR_SUBSTR_ALREADY_EXISTS)) {
-        this.logger.error('Batch error:', err);
-        this.logger.error('Query:', query);
-        if (paramsList.length > 10) {
-          this.logger.error(`Batch params (${paramsList.length} items, first 10):`, paramsList.slice(0, 10));
-        } else {
-          this.logger.error('Batch params:', paramsList);
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const session = this.getSession('WRITE');
+      try {
+        await session.run(wrapWithUnwind(query), { batch: paramsList });
+        return;
+      } catch (err) {
+        const errStr = String(err).toLowerCase();
+        if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
+          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries})...`);
+          await session.close();
+          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          continue;
         }
+        if (!errStr.includes(ERR_SUBSTR_ALREADY_EXISTS)) {
+          this.logger.error('Batch error:', err);
+          this.logger.error('Query:', query);
+          if (paramsList.length > 10) {
+            this.logger.error(`Batch params (${paramsList.length} items, first 10):`, paramsList.slice(0, 10));
+          } else {
+            this.logger.error('Batch params:', paramsList);
+          }
+        }
+        throw err;
+      } finally {
+        await session.close();
       }
-      throw err;
-    } finally {
-      await session.close();
     }
   }
 
@@ -388,17 +399,29 @@ export class MemgraphService {
   ): Promise<ResultRow[]> {
     if (paramsList.length === 0) return [];
 
-    const session = this.getSession('WRITE');
-    try {
-      const result = await session.run(wrapWithUnwind(query), { batch: paramsList });
-      return resultToRows(result);
-    } catch (err) {
-      this.logger.error('Batch error:', err);
-      this.logger.error('Query:', query);
-      throw err;
-    } finally {
-      await session.close();
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const session = this.getSession('WRITE');
+      try {
+        const result = await session.run(wrapWithUnwind(query), { batch: paramsList });
+        return resultToRows(result);
+      } catch (err) {
+        const errStr = String(err).toLowerCase();
+        if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
+          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries})...`);
+          await session.close();
+          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          continue;
+        }
+        this.logger.error('Batch error:', err);
+        this.logger.error('Query:', query);
+        throw err;
+      } finally {
+        await session.close();
+      }
     }
+    // Should not reach here, but satisfy TypeScript
+    return [];
   }
 
   // ===========================================================================
@@ -683,8 +706,7 @@ export class MemgraphService {
     this.nodeBuffer.push({ label, properties });
     if (this.nodeBuffer.length >= (this.options.batchSize || 1000)) {
       this.logger.debug(`Node buffer full, flushing ${this.options.batchSize} nodes`);
-      // Note: In async context, this should be awaited. Consider using queueMicrotask
-      void this.flushNodes();
+      void this.enqueueFlush();
     }
   }
 
@@ -718,8 +740,7 @@ export class MemgraphService {
 
     if (this.relCount >= (this.options.batchSize || 1000)) {
       this.logger.debug(`Relationship buffer full, flushing ${this.options.batchSize} relationships`);
-      void this.flushNodes();
-      void this.flushRelationships();
+      void this.enqueueFlush();
     }
   }
 
@@ -743,13 +764,14 @@ export class MemgraphService {
     let skippedTotal = 0;
     let firstError: Error | null = null;
 
-    // Process each label group
-    const promises = Array.from(nodesByLabel.entries()).map(async ([label, propsList]) => {
+    // Process each label group sequentially to avoid transaction conflicts
+    for (const [label, propsList] of nodesByLabel.entries()) {
       try {
         const idKey = NODE_UNIQUE_CONSTRAINTS[label];
         if (!idKey) {
           this.logger.warn(`No unique constraint for label: ${label}`);
-          return { flushed: 0, skipped: propsList.length };
+          skippedTotal += propsList.length;
+          continue;
         }
 
         const batchRows: NodeBatchRow[] = [];
@@ -777,18 +799,13 @@ export class MemgraphService {
           await this.executeBatch(query, batchRows);
         }
 
-        return { flushed: batchRows.length, skipped };
+        flushedTotal += batchRows.length;
+        skippedTotal += skipped;
       } catch (err) {
         this.logger.error(`Error flushing nodes for label ${label}:`, err);
         if (firstError === null) firstError = err as Error;
-        return { flushed: 0, skipped: propsList.length };
+        skippedTotal += propsList.length;
       }
-    });
-
-    const results = await Promise.all(promises);
-    for (const { flushed, skipped } of results) {
-      flushedTotal += flushed;
-      skippedTotal += skipped;
     }
 
     this.logger.info(`Nodes flushed: ${flushedTotal}/${bufferSize}`);
@@ -813,10 +830,14 @@ export class MemgraphService {
     let totalSuccessful = 0;
     let firstError: Error | null = null;
 
-    const promises = Array.from(this.relGroups.entries()).map(async ([patternKey, paramsList]) => {
+    // Process each pattern group sequentially to avoid transaction conflicts
+    for (const [patternKey, paramsList] of this.relGroups.entries()) {
       try {
         const pattern = this.patternMeta.get(patternKey);
-        if (!pattern) return { attempted: paramsList.length, successful: 0 };
+        if (!pattern) {
+          totalAttempted += paramsList.length;
+          continue;
+        }
 
         const [fromLabel, fromKey, relType, toLabel, toKey] = pattern;
         const hasProps = paramsList.some(p => Object.keys(p.props).length > 0);
@@ -849,18 +870,13 @@ export class MemgraphService {
           }
         }
 
-        return { attempted: paramsList.length, successful: batchSuccessful };
+        totalAttempted += paramsList.length;
+        totalSuccessful += batchSuccessful;
       } catch (err) {
         this.logger.error(`Error flushing relationships for pattern ${patternKey}:`, err);
         if (firstError === null) firstError = err as Error;
-        return { attempted: paramsList.length, successful: 0 };
+        totalAttempted += paramsList.length;
       }
-    });
-
-    const results = await Promise.all(promises);
-    for (const { attempted, successful } of results) {
-      totalAttempted += attempted;
-      totalSuccessful += successful;
     }
 
     this.logger.info(
@@ -874,6 +890,21 @@ export class MemgraphService {
     if (firstError !== null) {
       throw firstError;
     }
+  }
+
+  /**
+   * Enqueue a flush operation, ensuring only one runs at a time
+   * Prevents concurrent transaction conflicts from fire-and-forget flushes
+   */
+  private async enqueueFlush(): Promise<void> {
+    if (this.flushPromise) {
+      // Wait for the current flush to finish, then flush again
+      await this.flushPromise;
+    }
+    this.flushPromise = this.flushAll().finally(() => {
+      this.flushPromise = null;
+    });
+    await this.flushPromise;
   }
 
   /**

@@ -113,8 +113,6 @@ export class ServiceManager {
 		const memgraphConfig: MemgraphConfig = {
 			host: config.memgraphHost || settings.memgraphHost || "localhost",
 			port: config.memgraphPort || parseInt(settings.memgraphPort || "7687", 10),
-			username: settings.memgraphUser || "memgraph",
-			password: settings.memgraphPassword,
 		};
 		
 		this.memgraphService = createMemgraphService(memgraphConfig, {
@@ -447,8 +445,8 @@ export async function checkMemgraphConnectivity(
 	const tempService = createMemgraphService({
 		host,
 		port,
-		username: username || settings.memgraphUser || "memgraph",
-		password: password || settings.memgraphPassword,
+		username: username,
+		password: password,
 	}, { logLevel: "silent" });
 	
 	try {
