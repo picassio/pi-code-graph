@@ -45,17 +45,45 @@ async function ensureServices(ctx: ExtensionContext): Promise<void> {
 function toResultItems(items: unknown[]): ResultItem[] {
 	return items.map((item: unknown) => {
 		const rec = item as Record<string, unknown>;
+
+		// Find name: try common aliases the LLM might generate
+		const name = (rec.name ?? rec.caller_name ?? rec.callee_name ?? rec.function_name ?? rec.method_name ?? rec.class_name) as string | undefined;
+
+		// Find qualified name: try common aliases
+		const qualified_name = (rec.qualifiedName ?? rec.qualified_name ?? rec.caller_qn ?? rec.callee_qn ?? rec.qn) as string | undefined;
+
+		// Find path
+		const path = (rec.path ?? rec.filePath ?? rec.file_path) as string | undefined;
+
+		// Find type/labels
+		const type = rec.type as string | undefined;
+		let labels = rec.labels as string[] | undefined;
+		if (!labels && (rec.caller_type || rec.callee_type)) {
+			labels = (rec.caller_type ?? rec.callee_type) as string[] | undefined;
+		}
+
+		// Fallback: if nothing matched, use first string value from the record
+		let fallbackName: string | undefined;
+		if (!name && !qualified_name && !path) {
+			for (const val of Object.values(rec)) {
+				if (typeof val === 'string' && val.length > 0) {
+					fallbackName = val;
+					break;
+				}
+			}
+		}
+
 		return {
-			name: rec.name as string | undefined,
-			qualified_name: rec.qualifiedName as string || rec.qualified_name as string | undefined,
-			path: rec.path as string || rec.filePath as string | undefined,
-			type: rec.type as string | undefined,
-			labels: rec.labels as string[] | undefined,
-			start_line: rec.startLine as number || rec.start_line as number | undefined,
-			end_line: rec.endLine as number || rec.end_line as number | undefined,
+			name: name ?? fallbackName,
+			qualified_name,
+			path,
+			type,
+			labels,
+			start_line: (rec.startLine ?? rec.start_line) as number | undefined,
+			end_line: (rec.endLine ?? rec.end_line) as number | undefined,
 			docstring: rec.docstring as string | undefined,
-			source_code: rec.sourceCode as string || rec.source_code as string | undefined,
-			file_path: rec.filePath as string || rec.file_path as string | undefined,
+			source_code: (rec.sourceCode ?? rec.source_code) as string | undefined,
+			file_path: path,
 			score: rec.score as number | undefined,
 		};
 	});
