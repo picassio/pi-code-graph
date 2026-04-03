@@ -283,7 +283,8 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
       logger.debug(`Found class: ${classQn}`);
 
       // Process methods inside the class
-      await this.ingestMethodsInClass(classNode, classQn, moduleQn, language, queries);
+      logger.info(`Processing methods for class: ${classQn} (label=${nodeLabel})`);
+      await this.ingestMethodsInClass(classNode, classQn, moduleQn, language, queries, nodeLabel);
     }
   }
 
@@ -292,7 +293,8 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     classQn: string,
     moduleQn: string,
     language: SupportedLanguage,
-    queries: Map<SupportedLanguage, LanguageQueries>
+    queries: Map<SupportedLanguage, LanguageQueries>,
+    classLabel: string = cs.NodeLabel.CLASS
   ): Promise<void> {
     const langQueries = queries.get(language);
     if (!langQueries?.functions) return;
@@ -335,14 +337,14 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.KEY_IS_EXPORTED]: info.isExported,
       });
 
-      // Link to class
+      // Link to class (use actual label, not hardcoded CLASS)
       this.ingestor.ensureRelationshipBatch(
-        [cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, classQn],
+        [classLabel, cs.KEY_QUALIFIED_NAME, classQn],
         cs.RelationshipType.DEFINES_METHOD,
         [cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, methodQn]
       );
 
-      logger.debug(`Found method: ${methodQn}`);
+      logger.info(`Found method: ${methodQn} (class=${classQn})`);
     }
   }
 
