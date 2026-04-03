@@ -580,6 +580,10 @@ export class GraphUpdater {
   // For single-file mode
   private singleFile: string | null = null;
 
+  // Track changed files for incremental embedding updates
+  private changedFilePaths: Set<string> = new Set();
+  private isForceRun = false;
+
   constructor(
     ingestor: IngestorProtocol,
     repoPath: string,
@@ -642,6 +646,9 @@ export class GraphUpdater {
    * Run the indexing process
    */
   async run(force: boolean = false): Promise<void> {
+    this.isForceRun = force;
+    this.changedFilePaths.clear();
+
     // Check if repo path is a single file
     const repoStat = await stat(this.repoPath);
     if (repoStat.isFile()) {
@@ -888,6 +895,7 @@ export class GraphUpdater {
         logger.debug(`[graph-updater] New: ${fileKey}`);
       }
 
+      this.changedFilePaths.add(fileKey);
       changedCount++;
       await this.processSingleFile(filepath);
 
@@ -908,6 +916,7 @@ export class GraphUpdater {
       for (const deletedKey of deletedKeys) {
         const deletedPath = join(this.repoPath, deletedKey);
         this.removeFileFromState(deletedPath);
+        this.changedFilePaths.add(deletedKey);
 
         if (this.isQueryProtocol(this.ingestor)) {
           await this.ingestor.executeWrite(CYPHER_DELETE_MODULE, { [cs.KEY_PATH]: deletedKey });
@@ -1076,7 +1085,20 @@ export class GraphUpdater {
       return;
     }
 
-    logger.info(`[graph-updater] Generating embeddings for ${results.length} functions/methods...`);
+    // On incremental update, only re-embed functions from changed files
+    const filteredResults = this.isForceRun
+      ? results
+      : results.filter(row => {
+          const filePath = row.path as string | null;
+          return filePath && this.changedFilePaths.has(filePath);
+        });
+
+    if (filteredResults.length === 0) {
+      logger.info('[graph-updater] No changed functions to embed');
+      return;
+    }
+
+    logger.info(`[graph-updater] Generating embeddings for ${filteredResults.length}/${results.length} functions/methods${this.isForceRun ? ' (full)' : ' (changed only)'}...`);
 
     // Build embedding documents from source code
     const BATCH_SIZE = 50;
@@ -1089,7 +1111,7 @@ export class GraphUpdater {
       nodeType?: string;
     }> = [];
 
-    for (const row of results) {
+    for (const row of filteredResults) {
       const qualifiedName = row.qualified_name as string;
       const filePath = row.path as string | null;
       const startLine = row.start_line as number | null;
