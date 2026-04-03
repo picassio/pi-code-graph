@@ -52,8 +52,8 @@ services:
     container_name: ${CONTAINER_NAME}
     ports:
       - "${settings.memgraphPort}:7687"   # Bolt protocol
-      - "7444:7444"   # Memgraph Lab API
-      - "3000:3000"   # Memgraph Lab frontend
+      - "27444:7444"   # Memgraph Lab API
+      - "23000:3000"   # Memgraph Lab frontend
     volumes:
       - cgr-memgraph-data:/var/lib/memgraph
       - cgr-memgraph-log:/var/log/memgraph
