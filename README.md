@@ -82,7 +82,7 @@ cd ~/.pi/agent/extensions/pi-code-graph && npm install
 │           │                                      │             │
 │  ┌────────┴──────────┐              ┌────────────┴──────────┐  │
 │  │  Graph Queries    │              │  Vector Store (zvec)  │  │
-│  │  (Cypher)         │              │  (~/.cgr/vectors)     │  │
+│  │  (Cypher)         │              │  (~/.cgs/vectors)     │  │
 │  └───────────────────┘              └───────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -93,7 +93,7 @@ cd ~/.pi/agent/extensions/pi-code-graph && npm install
 2. **Graph Updater** extracts nodes (functions, classes, modules) and edges (calls, imports, inherits)
 3. Writes to **Memgraph** via Bolt protocol (neo4j-driver)
 4. **Embedding Service** generates vectors for semantic search (OpenAI text-embedding-3-small)
-5. Vectors stored in **zvec** (embedded HNSW index at `~/.cgr/vectors`)
+5. Vectors stored in **zvec** (embedded HNSW index at `~/.cgs/vectors`)
 
 ### Query Pipeline
 
@@ -173,7 +173,7 @@ You can choose which provider and model to use via `/cgs config`:
 
 ### Config File
 
-Settings persist to `~/.cgr/config.toml`:
+Settings persist to `~/.cgs/config.toml`:
 
 ```toml
 [llm]

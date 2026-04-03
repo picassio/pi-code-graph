@@ -33,7 +33,7 @@ export const DEFAULT_HNSW_EF_SEARCH = 100;
 // =============================================================================
 
 export interface VectorStoreConfig {
-  /** Path to store vector data (default: ~/.cgr/vectors) */
+  /** Path to store vector data (default: ~/.cgs/vectors) */
   storagePath?: string;
   /** Vector dimension (default: 1536 for OpenAI) */
   dimension?: number;

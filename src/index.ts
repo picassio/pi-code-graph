@@ -51,7 +51,7 @@ let lastCheckError: string | null = null;
  * Main extension entry point
  */
 export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
-	// Load settings: first from ~/.cgr/config.toml, then override with environment
+	// Load settings: first from ~/.cgs/config.toml, then override with environment
 	const fileResult = loadSettingsFromFile();
 	if (!fileResult.success) {
 		console.warn(`[pi-code-graph] Failed to load config from ${getConfigFilePath()}: ${fileResult.error}`);
@@ -127,7 +127,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 
 	// Check availability and initialize services on session start
 	pi.on("session_start", async (_event, ctx) => {
-		// Load settings from ~/.cgr/config.toml (refresh for new session)
+		// Load settings from ~/.cgs/config.toml (refresh for new session)
 		loadSettingsFromFile();
 		const settings = getSettings();
 
