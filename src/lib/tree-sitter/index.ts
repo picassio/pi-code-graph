@@ -7,7 +7,7 @@ import { logger } from '../logger.js';
 import { Parser, Language, Query, Tree, Node } from 'web-tree-sitter';
 import { SupportedLanguage } from '../constants.js';
 import type { LanguageQueries, LanguageSpec } from '../types.js';
-import { LANGUAGE_WASM_CONFIG, LANGUAGE_SPECS, getLanguageForExtension, hasWasmSupport } from './languages.js';
+import { LANGUAGE_WASM_CONFIG, LANGUAGE_SPECS, getLanguageForExtension, hasWasmSupport, getWasmSupportedLanguages } from './languages.js';
 import { LANGUAGE_QUERIES, type LanguageQuerySet } from './queries.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -203,7 +203,8 @@ export async function loadAllLanguages(): Promise<Map<SupportedLanguage, Languag
   await ensureInitialized();
 
   const results = new Map<SupportedLanguage, Language>();
-  const languages = Object.values(SupportedLanguage);
+  // Only load languages that have WASM files configured
+  const languages = getWasmSupportedLanguages();
 
   // Load languages in parallel
   const loadPromises = languages.map(async (lang) => {
@@ -321,7 +322,8 @@ export async function getQueries(language: SupportedLanguage): Promise<LanguageQ
  */
 export async function loadAllQueries(): Promise<Map<SupportedLanguage, LanguageQueries>> {
   const results = new Map<SupportedLanguage, LanguageQueries>();
-  const languages = Object.values(SupportedLanguage);
+  // Only load queries for languages that have WASM files configured
+  const languages = getWasmSupportedLanguages();
 
   const loadPromises = languages.map(async (lang) => {
     try {

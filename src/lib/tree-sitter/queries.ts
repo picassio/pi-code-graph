@@ -614,7 +614,7 @@ export const PHP_QUERIES = {
   `,
   locals: `
     ; Variable definitions
-    (simple_variable) @local.definition
+    (variable_name) @local.definition
 
     ; Function definitions
     (function_definition name: (name) @local.definition)
