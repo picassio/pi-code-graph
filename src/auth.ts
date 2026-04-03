@@ -6,7 +6,6 @@
  */
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { CGRConfig } from "./types.js";
 
 /**
  * Provider mapping from pi providers to CGR providers
@@ -206,57 +205,6 @@ export async function getApiKeyFromPi(
 	} catch {
 		return undefined;
 	}
-}
-
-/**
- * Build environment variables for CGR with pi's API keys
- */
-export async function buildCGREnvironment(
-	ctx: ExtensionContext,
-	config: CGRConfig,
-): Promise<Record<string, string>> {
-	const env: Record<string, string> = {
-		...process.env,
-		MEMGRAPH_HOST: config.memgraphHost,
-		MEMGRAPH_PORT: config.memgraphPort,
-	};
-
-	// Try to get API keys from pi's auth system
-	const preferred = await getPreferredProvider(ctx);
-
-	if (preferred) {
-		// Set orchestrator config (for --ask-agent)
-		env.ORCHESTRATOR_PROVIDER = preferred.provider;
-		env.ORCHESTRATOR_MODEL = preferred.model;
-		if (preferred.apiKey) {
-			env.ORCHESTRATOR_API_KEY = preferred.apiKey;
-		}
-		if (preferred.endpoint) {
-			env.ORCHESTRATOR_ENDPOINT = preferred.endpoint;
-		}
-
-		// Set cypher generator config (same provider)
-		env.CYPHER_PROVIDER = preferred.provider;
-		env.CYPHER_MODEL = preferred.model;
-		if (preferred.apiKey) {
-			env.CYPHER_API_KEY = preferred.apiKey;
-		}
-		if (preferred.endpoint) {
-			env.CYPHER_ENDPOINT = preferred.endpoint;
-		}
-	}
-
-	// Check for explicit overrides via environment
-	if (process.env.CGR_PROVIDER) {
-		env.ORCHESTRATOR_PROVIDER = process.env.CGR_PROVIDER;
-		env.CYPHER_PROVIDER = process.env.CGR_PROVIDER;
-	}
-	if (process.env.CGR_MODEL) {
-		env.ORCHESTRATOR_MODEL = process.env.CGR_MODEL;
-		env.CYPHER_MODEL = process.env.CGR_MODEL;
-	}
-
-	return env;
 }
 
 /**

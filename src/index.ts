@@ -36,7 +36,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { basename } from "node:path";
 
-import { getConfig } from "./config.js";
 import { getServiceManager, checkMemgraphConnectivity } from "./services.js";
 import { registerQueryTools, registerIndexingTools } from "./tools.js";
 import { registerCommands } from "./commands.js";
@@ -131,12 +130,11 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 		// Load settings from ~/.cgr/config.toml (refresh for new session)
 		loadSettingsFromFile();
 		const settings = getSettings();
-		const config = getConfig(ctx.cwd);
 
 		// Check Memgraph connectivity using native library
 		let mgStatus = await checkMemgraphConnectivity(
-			settings.memgraphHost || config.memgraphHost,
-			parseInt(settings.memgraphPort || config.memgraphPort, 10)
+			settings.memgraphHost,
+			parseInt(settings.memgraphPort, 10)
 		);
 		
 		if (!mgStatus.available) {
@@ -157,8 +155,8 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 					if (ready) {
 						// Re-check connectivity
 						mgStatus = await checkMemgraphConnectivity(
-							settings.memgraphHost || config.memgraphHost,
-							parseInt(settings.memgraphPort || config.memgraphPort, 10)
+							settings.memgraphHost,
+							parseInt(settings.memgraphPort, 10)
 						);
 						if (mgStatus.available) {
 							ctx.ui.notify("Memgraph auto-started successfully.", "info");
@@ -215,7 +213,7 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 		}
 
 		// Show brief status in footer
-		ctx.ui.setStatus("cgs", `📊 ${config.projectName}`);
+		ctx.ui.setStatus("cgs", `📊 ${settings.projectName || basename(ctx.cwd)}`);
 
 		// Clear status after 3 seconds
 		setTimeout(() => {
@@ -243,18 +241,11 @@ export default function codeGraphRAGExtension(pi: ExtensionAPI): void {
 	});
 }
 
-// Re-export types for external use
-export type { CGRConfig } from "./types.js";
-export { getConfig } from "./config.js";
-
 // Re-export service manager for programmatic access
 export { getServiceManager, initializeServices, checkMemgraphConnectivity } from "./services.js";
 
 // Re-export auth utilities
-export { hasValidCredentials, getPreferredProvider, buildCGREnvironment } from "./auth.js";
+export { hasValidCredentials, getPreferredProvider } from "./auth.js";
 
 // Re-export the library components for advanced usage
 export * from "./lib/index.js";
-
-// Legacy exports (deprecated)
-export { execCGR, execCGRSimple, parseJSONOutput, checkCGRAvailable, checkMemgraphAvailable } from "./executor.js";

@@ -2,27 +2,6 @@
  * Type definitions for pi-code-graph extension
  */
 
-export interface CGRConfig {
-	/** Path to cgr binary */
-	binary: string;
-	/** Project name in the graph */
-	projectName: string;
-	/** Whether indexing tools are enabled */
-	allowIndex: boolean;
-	/** Memgraph host */
-	memgraphHost: string;
-	/** Memgraph port */
-	memgraphPort: string;
-	/** Request timeout in milliseconds */
-	timeout: number;
-}
-
-export interface ExecResult {
-	stdout: string;
-	stderr: string;
-	code: number;
-}
-
 export interface QueryResult {
 	results?: ResultItem[];
 	output?: string;

@@ -26,9 +26,6 @@ import {
 	getDockerComposePath,
 } from "./docker.js";
 
-// Keep old executor imports for backward compatibility during transition
-import { checkCGRAvailable } from "./executor.js";
-import { getConfig } from "./config.js";
 
 /**
  * Save settings and notify user
@@ -46,10 +43,59 @@ function saveSettings(ctx: ExtensionContext): void {
 export function registerCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("cgs", {
 		description: "Code Graph RAG - /cgs <command> [args]. Commands: config, status, query, index, docker, clear, help",
+		getArgumentCompletions: (prefix) => {
+			const subs = [
+				{ value: "config", label: "config", description: "Configure extension (LLM, embedding, Memgraph)" },
+				{ value: "status", label: "status", description: "Check Memgraph, LLM, embedding availability" },
+				{ value: "query", label: "query", description: "Query the code graph" },
+				{ value: "index", label: "index", description: "Index/update repository" },
+				{ value: "docker", label: "docker", description: "Manage Memgraph Docker container" },
+				{ value: "clear", label: "clear", description: "Clear results widget" },
+				{ value: "help", label: "help", description: "Show help" },
+			];
+			return subs.filter(s => s.value.startsWith(prefix));
+		},
 		handler: async (args, ctx) => {
 			const parts = (args || "").trim().split(/\s+/);
-			const subcommand = parts[0]?.toLowerCase() || "help";
+			const subcommand = parts[0]?.toLowerCase();
 			const subargs = parts.slice(1).join(" ");
+
+			if (!subcommand) {
+				// Show interactive menu when no args provided
+				const choice = await ctx.ui.select("Code Graph RAG", [
+					"⚙️  Config — Configure LLM, embedding, Memgraph",
+					"📊 Status — Check service availability",
+					"🔍 Query — Query the code graph",
+					"📥 Index — Index/update repository",
+					"🐳 Docker — Manage Memgraph container",
+					"❓ Help — Show help",
+				]);
+
+				if (!choice) return;
+
+				const menuMap: Record<string, string> = {
+					"⚙️  Config — Configure LLM, embedding, Memgraph": "config",
+					"📊 Status — Check service availability": "status",
+					"🔍 Query — Query the code graph": "query",
+					"📥 Index — Index/update repository": "index",
+					"🐳 Docker — Manage Memgraph container": "docker",
+					"❓ Help — Show help": "help",
+				};
+
+				const mapped = menuMap[choice];
+				if (!mapped) return;
+
+				// Dispatch to the selected subcommand
+				switch (mapped) {
+					case "config": await handleConfig(pi, ctx); return;
+					case "status": await handleStatus(ctx); return;
+					case "query": await handleQuery(ctx, ""); return;
+					case "index": await handleIndex(ctx, ""); return;
+					case "docker": await handleDocker(ctx, ""); return;
+					case "help": await handleHelp(ctx); return;
+				}
+				return;
+			}
 
 			switch (subcommand) {
 				case "config":
@@ -107,7 +153,6 @@ export function registerCommands(pi: ExtensionAPI): void {
  */
 async function handleStatus(ctx: ExtensionContext): Promise<void> {
 	const settings = getSettings();
-	const config = getConfig(ctx.cwd);
 
 	ctx.ui.setStatus("cgs", "Checking...");
 
@@ -116,9 +161,6 @@ async function handleStatus(ctx: ExtensionContext): Promise<void> {
 		settings.memgraphHost,
 		parseInt(settings.memgraphPort, 10)
 	);
-	
-	// Check CGR binary (for backward compatibility info)
-	const cgrStatus = await checkCGRAvailable(config, ctx.cwd);
 	
 	// Check LLM credentials
 	const credStatus = await hasValidCredentials(ctx);
@@ -129,12 +171,9 @@ async function handleStatus(ctx: ExtensionContext): Promise<void> {
 		"Code Graph RAG Status",
 		"═════════════════════",
 		"",
-		"TypeScript Library (native):",
+		"Status:",
 		`  Memgraph:  ${mgStatus.available ? "✓ Connected" : `✗ ${mgStatus.error || "not reachable"}`}`,
 		`  LLM:       ${credStatus.valid ? `✓ ${credStatus.provider}` : `✗ ${credStatus.error || "no credentials"}`}`,
-		"",
-		"Python CLI (legacy/optional):",
-		`  CGR CLI:   ${cgrStatus.available ? `✓ ${cgrStatus.version || "available"}` : `✗ ${cgrStatus.error || "not found"}`}`,
 		"",
 		`Memgraph:    ${settings.memgraphHost}:${settings.memgraphPort}`,
 		`Config:      ${getConfigFilePath()}`,
@@ -292,7 +331,35 @@ async function handleIndex(ctx: ExtensionContext, args: string): Promise<void> {
  */
 async function handleDocker(ctx: ExtensionContext, args: string): Promise<void> {
 	const parts = args.trim().split(/\s+/);
-	const action = parts[0]?.toLowerCase() || "status";
+	const action = parts[0]?.toLowerCase();
+
+	if (!action) {
+		// Show interactive menu when no docker subcommand provided
+		const choice = await ctx.ui.select("Docker — Memgraph Container", [
+			"▶️  Start — Start Memgraph container",
+			"⏹️  Stop — Stop Memgraph container",
+			"🔄 Restart — Restart Memgraph container",
+			"📊 Status — Show Docker/Memgraph status",
+			"📋 Logs — Show Memgraph logs",
+		]);
+
+		if (!choice) return;
+
+		const dockerMenuMap: Record<string, string> = {
+			"▶️  Start — Start Memgraph container": "start",
+			"⏹️  Stop — Stop Memgraph container": "stop",
+			"🔄 Restart — Restart Memgraph container": "restart",
+			"📊 Status — Show Docker/Memgraph status": "status",
+			"📋 Logs — Show Memgraph logs": "logs",
+		};
+
+		// Re-dispatch with the selected action
+		const mapped = dockerMenuMap[choice];
+		if (mapped) {
+			return handleDocker(ctx, mapped);
+		}
+		return;
+	}
 
 	switch (action) {
 		case "status":
