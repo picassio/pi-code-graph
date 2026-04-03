@@ -89,6 +89,14 @@ export class CallResolver {
         const funcType = this.functionRegistry.get(funcQn);
         return [this.nodeTypeToLabel(funcType!), funcQn];
       }
+      // Try re-export resolution: search by name within the same package prefix
+      const importPrefix = importedModule.split(cs.SEPARATOR_DOT).slice(0, 3).join(cs.SEPARATOR_DOT);
+      const candidates = this.functionRegistry.findEndingWith(methodName)
+        .filter(qn => qn.startsWith(importPrefix));
+      if (candidates.length === 1) {
+        const funcType = this.functionRegistry.get(candidates[0]);
+        return [this.nodeTypeToLabel(funcType!), candidates[0]];
+      }
       // Return as potential external call
       return [NodeLabel.FUNCTION, funcQn];
     }
@@ -148,6 +156,15 @@ export class CallResolver {
       if (this.functionRegistry.has(importedQn)) {
         const funcType = this.functionRegistry.get(importedQn);
         return [this.nodeTypeToLabel(funcType!), importedQn];
+      }
+      // Import target not in registry — might be a re-export.
+      // Try finding the function by name in the same package prefix.
+      const importPrefix = importedQn.split(cs.SEPARATOR_DOT).slice(0, 3).join(cs.SEPARATOR_DOT);
+      const candidates = this.functionRegistry.findEndingWith(callName)
+        .filter(qn => qn.startsWith(importPrefix));
+      if (candidates.length === 1) {
+        const funcType = this.functionRegistry.get(candidates[0]);
+        return [this.nodeTypeToLabel(funcType!), candidates[0]];
       }
       return [NodeLabel.FUNCTION, importedQn];
     }
