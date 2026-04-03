@@ -307,12 +307,19 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     const methodNodes = captures[cs.CAPTURE_FUNCTION] ?? [];
     const config = langQueries.config;
 
+    logger.info(`  Methods query found ${methodNodes.length} nodes in ${classQn} (bodyNode=${bodyNode?.type ?? 'null'}, searchNode=${searchNode.type})`);
+
     for (const methodNode of methodNodes) {
       const methodName = this.extractFunctionName(methodNode, language);
-      if (!methodName) continue;
+      if (!methodName) {
+        logger.info(`  Skipping unnamed method node: ${methodNode.type}`);
+        continue;
+      }
 
       // Ensure this method is a direct child of this class (not nested in another)
-      if (!this.isDirectMethodOfClass(methodNode, classNode, config)) {
+      const isDirect = this.isDirectMethodOfClass(methodNode, classNode, config);
+      if (!isDirect) {
+        logger.info(`  Skipping non-direct method: ${methodName} (type=${methodNode.type}, parent=${methodNode.parent?.type})`);
         continue;
       }
 
@@ -637,14 +644,16 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     classNode: TreeSitterNode,
     config: LanguageSpec
   ): boolean {
+    // Walk up from the method node to find if it's a direct child of classNode
+    // Use node ID comparison since tree-sitter .parent returns new wrapper objects
+    const classId = classNode.id;
     let current = methodNode.parent;
     while (current) {
-      // If we hit the class body, we're a direct child
-      if (current.parent === classNode) {
+      if (current.parent?.id === classId) {
         return true;
       }
       // If we hit another class before the target class, we're nested
-      if (config.classNodeTypes.includes(current.type) && current !== classNode) {
+      if (config.classNodeTypes.includes(current.type) && current.id !== classId) {
         return false;
       }
       current = current.parent;
