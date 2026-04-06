@@ -131,6 +131,43 @@ describe('validateCypherReadOnly', () => {
     ).toThrow(LLMGenerationError);
   });
 
+  it('should NOT false-flag CREATE keyword inside string literals', () => {
+    // Regression: validateCypherReadOnly used to uppercase the whole query and
+    // search for CREATE, which incorrectly matched property values like 'create'.
+    const queries = [
+      "MATCH (m:Method) WHERE m.name = 'create' RETURN m",
+      'MATCH (n) WHERE n.name = "createUser" RETURN n',
+      "MATCH (n) WHERE n.docstring CONTAINS 'CREATE TABLE example' RETURN n",
+      "MATCH (n) WHERE n.name CONTAINS 'delete' RETURN n", // also tests other dangerous keywords
+      "MATCH (n) WHERE n.body = 'SET x = 1' RETURN n",
+    ];
+    for (const query of queries) {
+      expect(() => validateCypherReadOnly(query)).not.toThrow();
+    }
+  });
+
+  it('should still catch CREATE statements even when string literals are present', () => {
+    expect(() =>
+      validateCypherReadOnly("CREATE (n:Node {name: 'foo'})")
+    ).toThrow(LLMGenerationError);
+  });
+
+  it('should NOT false-flag dangerous keywords inside backtick identifiers', () => {
+    // Memgraph allows backtick-quoted identifiers for label/property names with reserved words
+    expect(() =>
+      validateCypherReadOnly("MATCH (n:`CreateAction`) RETURN n")
+    ).not.toThrow();
+  });
+
+  it('should NOT false-flag dangerous keywords inside comments', () => {
+    expect(() =>
+      validateCypherReadOnly('MATCH (n) RETURN n // CREATE is dangerous but this is a comment')
+    ).not.toThrow();
+    expect(() =>
+      validateCypherReadOnly('MATCH (n) /* CREATE INDEX comment */ RETURN n')
+    ).not.toThrow();
+  });
+
   it('should throw on MERGE queries', () => {
     expect(() =>
       validateCypherReadOnly('MERGE (n:Node {id: 1})')

@@ -832,10 +832,31 @@ const CYPHER_DANGEROUS_PATTERNS = Array.from(CYPHER_DANGEROUS_KEYWORDS).map((kw)
 }));
 
 /**
+ * Strip string literals and comments from a Cypher query before keyword validation,
+ * so that property values like `m.name = 'create'` don't false-flag as CREATE statements.
+ */
+function stripCypherLiteralsAndComments(query: string): string {
+  let out = query;
+  // Strip block comments /* ... */
+  out = out.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  // Strip line comments //...
+  out = out.replace(/\/\/[^\n]*/g, ' ');
+  // Strip single-quoted strings (Cypher allows both ' and " for string literals)
+  out = out.replace(/'(?:[^'\\]|\\.)*'/g, "''");
+  // Strip double-quoted strings
+  out = out.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  // Strip backtick-quoted identifiers (these can be label/property names)
+  out = out.replace(/`(?:[^`\\]|\\.)*`/g, '``');
+  return out;
+}
+
+/**
  * Validate that a Cypher query is read-only (no mutations)
  */
 export function validateCypherReadOnly(query: string): void {
-  const upperQuery = query.toUpperCase();
+  // Strip string literals/comments so property values like 'create' don't false-flag
+  const sanitized = stripCypherLiteralsAndComments(query);
+  const upperQuery = sanitized.toUpperCase();
 
   for (const { keyword, pattern } of CYPHER_DANGEROUS_PATTERNS) {
     if (pattern.test(upperQuery)) {

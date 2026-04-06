@@ -183,12 +183,14 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 		description:
 			"Retrieve source code for a function, class, or method using its fully qualified name. " +
 			"Use this after query_code_graph to get the actual source code of a specific item. " +
-			"Example qualified names: 'myproject.services.user.UserService.create_user', " +
-			"'myproject.utils.validate_email', 'myproject.models.User'",
+			"Qualified names use the format 'file/path.ts:Class.method' or 'file/path.ts:functionName'. " +
+			"Examples: 'src/services/user.ts:UserService.createUser', " +
+			"'src/utils/validate.ts:validateEmail', 'src/models/user.ts:User'. " +
+			"Pass the qualified_name exactly as returned by query_code_graph or analyze_code_dependencies.",
 		promptSnippet: "Get source code by qualified name from the code graph",
 		parameters: Type.Object({
 			qualified_name: Type.String({
-				description: "Fully qualified name (e.g., 'project.module.ClassName.method_name')",
+				description: "Fully qualified name in file-path format: 'src/path/file.ts:ClassName.methodName' or 'src/path/file.ts:functionName'",
 			}),
 		}),
 

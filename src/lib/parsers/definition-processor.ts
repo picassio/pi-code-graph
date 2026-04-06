@@ -495,16 +495,14 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   ): Promise<void> {
     const normalizedFilePath = normalizeFilePath(relativePath);
 
-    // Find all top-level (and exported) const declarations with interface types
+    // Find const declarations with interface types throughout the file.
+    // We descend into function/method bodies AND into class method bodies to catch:
+    //   function foo() { const provider: SomeInterface = { ... }; return provider; }
+    //   class Foo { method() { const x: Interface = { ... }; ... } }
+    // We only skip interface_declaration (no nested const can exist inside an interface).
     const walk = (node: TreeSitterNode, isExported: boolean): void => {
-      // Don't recurse into function/class bodies (they have their own scope)
-      if (
-        node.type === 'function_declaration' ||
-        node.type === 'method_definition' ||
-        node.type === 'class_declaration' ||
-        node.type === 'class' ||
-        node.type === 'interface_declaration'
-      ) {
+      // Skip interface body — it has no executable code, only type signatures
+      if (node.type === 'interface_declaration') {
         return;
       }
 
@@ -533,10 +531,11 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
             );
           }
         }
-        return;
+        // Note: do NOT return here — the declarator's value (e.g. a function expression
+        // initializer) might also contain nested interface impls. Fall through to recurse.
       }
 
-      // Recurse
+      // Recurse into children (including function/method bodies)
       for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
         if (child) walk(child, isExported);
