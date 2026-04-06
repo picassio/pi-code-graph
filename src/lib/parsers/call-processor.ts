@@ -98,11 +98,13 @@ export class CallResolver {
 
     // Final part is the method name
     const methodName = parts[parts.length - 1];
-    // New-format QN: `src/lib/foo.ts:ClassName.method` — ends with `.{ClassName}.{method}`
-    const suffix = `.${currentType}.${methodName}`;
+    // New-format QN: `path:ClassName.method` — we want anything that ends with
+    // either `:{ClassName}.{methodName}` (top of file) or `.{ClassName}.{methodName}` (nested)
+    const colonSuffix = `:${currentType}.${methodName}`;
+    const dotSuffix = `.${currentType}.${methodName}`;
     const candidates = this.functionRegistry.findEndingWith(methodName);
     for (const qn of candidates) {
-      if (qn.endsWith(suffix)) {
+      if (qn.endsWith(colonSuffix) || qn.endsWith(dotSuffix)) {
         const funcType = this.functionRegistry.get(qn);
         return [this.nodeTypeToLabel(funcType!), qn, 0.9];
       }
