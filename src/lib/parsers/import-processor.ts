@@ -19,6 +19,16 @@ import * as cs from '../constants.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorkspaceMap } from './workspace-resolver.js';
+import {
+  buildSuffixIndex,
+  EMPTY_SUFFIX_INDEX,
+  suffixResolveImport,
+  type SuffixIndex,
+} from './suffix-resolver.js';
+import {
+  EMPTY_TSCONFIG_ALIASES,
+  type TsconfigAliasMap,
+} from './tsconfig-resolver.js';
 
 // =============================================================================
 // Cache Functions
@@ -75,13 +85,16 @@ export class ImportProcessor implements ImportProcessorProtocol {
   private isLocalModule: LocalModuleCache;
   private isLocalJavaImport: LocalModuleCache;
   private workspaceMap: WorkspaceMap | null;
+  private suffixIndex: SuffixIndex = EMPTY_SUFFIX_INDEX;
+  private tsconfigAliases: TsconfigAliasMap = EMPTY_TSCONFIG_ALIASES;
 
   constructor(
     repoPath: string,
     projectName: string,
     ingestor: IngestorProtocol,
     functionRegistry: FunctionRegistryTrie | null = null,
-    workspaceMap: WorkspaceMap | null = null
+    workspaceMap: WorkspaceMap | null = null,
+    tsconfigAliases: TsconfigAliasMap = EMPTY_TSCONFIG_ALIASES
   ) {
     this.repoPath = repoPath;
     this.projectName = projectName;
@@ -90,6 +103,34 @@ export class ImportProcessor implements ImportProcessorProtocol {
     this.isLocalModule = createLocalModuleCache(repoPath);
     this.isLocalJavaImport = createLocalJavaImportCache(repoPath);
     this.workspaceMap = workspaceMap;
+    this.tsconfigAliases = tsconfigAliases;
+  }
+
+  /** Replace the tsconfig alias map (used for testing / late init). */
+  setTsconfigAliases(aliases: TsconfigAliasMap): void {
+    this.tsconfigAliases = aliases;
+    if (aliases.hasAliases) {
+      logger.info(`[import] tsconfig aliases installed: ${aliases.size} entries`);
+    }
+  }
+
+  /**
+   * Install (or replace) the suffix index used as a fallback for JS/TS
+   * import resolution. Should be called once after all source files have
+   * been discovered, before per-file import parsing benefits from it.
+   */
+  setSuffixIndex(index: SuffixIndex): void {
+    this.suffixIndex = index;
+    logger.info(`[import] Suffix index installed: ${index.size} entries`);
+  }
+
+  /**
+   * Convenience: build and install a suffix index from a list of file paths.
+   */
+  buildAndSetSuffixIndex(filePaths: Iterable<string>): void {
+    this.setSuffixIndex(
+      buildSuffixIndex(this.repoPath, this.projectName, filePaths)
+    );
   }
 
   // ===========================================================================
@@ -333,8 +374,17 @@ export class ImportProcessor implements ImportProcessorProtocol {
   }
 
   private resolveJsModulePath(importPath: string, currentModule: string): string {
+    // tsconfig path aliases are tried first: rewrite e.g. "@/foo/bar" → "src/foo/bar".
+    if (this.tsconfigAliases.hasAliases && !importPath.startsWith(cs.PATH_CURRENT_DIR)) {
+      const rewritten = this.tsconfigAliases.rewrite(importPath);
+      if (rewritten) {
+        logger.info(`[import] tsconfig alias: ${importPath} → ${rewritten}`);
+        importPath = rewritten;
+      }
+    }
+
+    // Workspace map (monorepo) is always tried next.
     if (!importPath.startsWith(cs.PATH_CURRENT_DIR)) {
-      // Check workspace map for monorepo cross-package imports
       if (this.workspaceMap) {
         const resolved = this.workspaceMap.resolve(importPath);
         if (resolved) {
@@ -342,7 +392,9 @@ export class ImportProcessor implements ImportProcessorProtocol {
           return resolved;
         }
       }
-      return importPath.replace(/\//g, cs.SEPARATOR_DOT);
+
+      const primary = importPath.replace(/\//g, cs.SEPARATOR_DOT);
+      return this.applySuffixFallback(importPath, primary);
     }
 
     const currentParts = currentModule.split(cs.SEPARATOR_DOT).slice(0, -1);
@@ -357,7 +409,28 @@ export class ImportProcessor implements ImportProcessorProtocol {
       }
     }
 
-    return currentParts.join(cs.SEPARATOR_DOT);
+    const primary = currentParts.join(cs.SEPARATOR_DOT);
+    return this.applySuffixFallback(importPath, primary);
+  }
+
+  /**
+   * If the primary-resolved module qn isn't a known module, attempt a
+   * suffix-based fallback against the suffix index. Used to handle
+   * re-export chains and ambiguous imports (e.g. `@pkg/oauth` that may
+   * resolve to `src/oauth.ts` or `src/utils/oauth/index.ts`).
+   */
+  private applySuffixFallback(importPath: string, primary: string): string {
+    if (this.suffixIndex.size === 0) return primary;
+    if (this.suffixIndex.hasModuleQn(primary)) return primary;
+
+    const hit = suffixResolveImport(importPath, primary, this.suffixIndex);
+    if (hit && hit !== primary) {
+      logger.info(
+        `[import] Suffix-resolve fallback: ${importPath} (primary='${primary}') → ${hit}`
+      );
+      return hit;
+    }
+    return primary;
   }
 
   private parseJsImportClause(

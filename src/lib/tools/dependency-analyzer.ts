@@ -24,6 +24,8 @@ export interface DependencyNode {
   file_path?: string;
   start_line?: number;
   end_line?: number;
+  /** Confidence score for the CALLS edge that linked this node (0.0-1.0). Absent when not from a relationship. */
+  confidence?: number;
 }
 
 export interface CallRelationship {
@@ -54,7 +56,7 @@ export interface DependencyAnalyzerConfig {
 // =============================================================================
 
 const CYPHER_FIND_CALLERS = `
-MATCH (caller)-[:CALLS]->(target)
+MATCH (caller)-[r:CALLS]->(target)
 WHERE target.qualified_name = $qualified_name
   OR target.name = $name
   OR target.qualified_name STARTS WITH ($qualified_name + '.')
@@ -65,13 +67,14 @@ RETURN DISTINCT
   labels(caller) AS caller_type,
   m.path AS file_path,
   caller.start_line AS start_line,
-  caller.end_line AS end_line
+  caller.end_line AS end_line,
+  coalesce(r.confidence, 1.0) AS confidence
 ORDER BY caller_qn
 LIMIT $limit
 `;
 
 const CYPHER_FIND_CALLEES = `
-MATCH (source)-[:CALLS]->(callee)
+MATCH (source)-[r:CALLS]->(callee)
 WHERE source.qualified_name = $qualified_name
   OR source.name = $name
   OR source.qualified_name STARTS WITH ($qualified_name + '.')
@@ -82,7 +85,8 @@ RETURN DISTINCT
   labels(callee) AS callee_type,
   m.path AS file_path,
   callee.start_line AS start_line,
-  callee.end_line AS end_line
+  callee.end_line AS end_line,
+  coalesce(r.confidence, 1.0) AS confidence
 ORDER BY callee_qn
 LIMIT $limit
 `;
@@ -379,6 +383,7 @@ export class DependencyAnalyzer {
       file_path: row.file_path as string | undefined,
       start_line: row.start_line as number | undefined,
       end_line: row.end_line as number | undefined,
+      confidence: row.confidence as number | undefined,
     }));
   }
 

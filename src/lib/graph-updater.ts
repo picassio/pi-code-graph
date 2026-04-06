@@ -855,6 +855,15 @@ export class GraphUpdater {
     }
 
     const eligibleFiles = await this.collectEligibleFiles();
+
+    // Build the suffix index used by the import processor as a fallback
+    // resolution layer (handles re-export chains and ambiguous imports).
+    try {
+      this.factory.getImportProcessor().buildAndSetSuffixIndex(eligibleFiles);
+    } catch (err) {
+      logger.warn('[graph-updater] Failed to build suffix index:', err);
+    }
+
     const newHashes: FileHashCache = {};
     let skippedCount = 0;
     let changedCount = 0;

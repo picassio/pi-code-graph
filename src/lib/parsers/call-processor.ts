@@ -59,7 +59,7 @@ export class CallResolver {
     moduleQn: string,
     localVarTypes: Map<string, string>,
     classContext: string | null
-  ): [NodeLabel, string] | null {
+  ): [NodeLabel, string, number] | null {
     // Handle chained calls like obj.method
     const parts = callName.split(cs.SEPARATOR_DOT);
 
@@ -77,7 +77,7 @@ export class CallResolver {
     if (objType) {
       const methodQn = `${objType}${cs.SEPARATOR_DOT}${methodName}`;
       if (this.functionRegistry.has(methodQn)) {
-        return [NodeLabel.METHOD, methodQn];
+        return [NodeLabel.METHOD, methodQn, 1.0];
       }
     }
 
@@ -87,7 +87,7 @@ export class CallResolver {
       const funcQn = `${importedModule}${cs.SEPARATOR_DOT}${methodName}`;
       if (this.functionRegistry.has(funcQn)) {
         const funcType = this.functionRegistry.get(funcQn);
-        return [this.nodeTypeToLabel(funcType!), funcQn];
+        return [this.nodeTypeToLabel(funcType!), funcQn, 1.0];
       }
       // Try re-export resolution: search by name within the same package prefix
       const importPrefix = importedModule.split(cs.SEPARATOR_DOT).slice(0, 3).join(cs.SEPARATOR_DOT);
@@ -95,10 +95,10 @@ export class CallResolver {
         .filter(qn => qn.startsWith(importPrefix));
       if (candidates.length === 1) {
         const funcType = this.functionRegistry.get(candidates[0]);
-        return [this.nodeTypeToLabel(funcType!), candidates[0]];
+        return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
       }
-      // Return as potential external call
-      return [NodeLabel.FUNCTION, funcQn];
+      // Return as potential external call — import resolved, name matched
+      return [NodeLabel.FUNCTION, funcQn, 0.8];
     }
 
     // Check if it's a method on self/this
@@ -106,7 +106,7 @@ export class CallResolver {
       if (classContext) {
         const methodQn = `${classContext}${cs.SEPARATOR_DOT}${methodName}`;
         if (this.functionRegistry.has(methodQn)) {
-          return [NodeLabel.METHOD, methodQn];
+          return [NodeLabel.METHOD, methodQn, 1.0];
         }
         // Check inherited methods
         const bases = this.classInheritance[classContext];
@@ -114,7 +114,7 @@ export class CallResolver {
           for (const base of bases) {
             const baseMethodQn = `${base}${cs.SEPARATOR_DOT}${methodName}`;
             if (this.functionRegistry.has(baseMethodQn)) {
-              return [NodeLabel.METHOD, baseMethodQn];
+              return [NodeLabel.METHOD, baseMethodQn, 1.0];
             }
           }
         }
@@ -124,7 +124,7 @@ export class CallResolver {
     // Check if it's a static method call (ClassName.method)
     const staticMethodQn = `${moduleQn}${cs.SEPARATOR_DOT}${callName}`;
     if (this.functionRegistry.has(staticMethodQn)) {
-      return [NodeLabel.METHOD, staticMethodQn];
+      return [NodeLabel.METHOD, staticMethodQn, 1.0];
     }
 
     return null;
@@ -134,19 +134,19 @@ export class CallResolver {
     callName: string,
     moduleQn: string,
     classContext: string | null
-  ): [NodeLabel, string] | null {
+  ): [NodeLabel, string, number] | null {
     // Check local scope first
     const localQn = `${moduleQn}${cs.SEPARATOR_DOT}${callName}`;
     if (this.functionRegistry.has(localQn)) {
       const funcType = this.functionRegistry.get(localQn);
-      return [this.nodeTypeToLabel(funcType!), localQn];
+      return [this.nodeTypeToLabel(funcType!), localQn, 1.0];
     }
 
     // Check if it's a method in current class
     if (classContext) {
       const methodQn = `${classContext}${cs.SEPARATOR_DOT}${callName}`;
       if (this.functionRegistry.has(methodQn)) {
-        return [NodeLabel.METHOD, methodQn];
+        return [NodeLabel.METHOD, methodQn, 1.0];
       }
     }
 
@@ -155,7 +155,7 @@ export class CallResolver {
     if (importedQn) {
       if (this.functionRegistry.has(importedQn)) {
         const funcType = this.functionRegistry.get(importedQn);
-        return [this.nodeTypeToLabel(funcType!), importedQn];
+        return [this.nodeTypeToLabel(funcType!), importedQn, 1.0];
       }
       // Import target not in registry — might be a re-export.
       // Try finding the function by name in the same package prefix.
@@ -164,9 +164,9 @@ export class CallResolver {
         .filter(qn => qn.startsWith(importPrefix));
       if (candidates.length === 1) {
         const funcType = this.functionRegistry.get(candidates[0]);
-        return [this.nodeTypeToLabel(funcType!), candidates[0]];
+        return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
       }
-      return [NodeLabel.FUNCTION, importedQn];
+      return [NodeLabel.FUNCTION, importedQn, 0.8];
     }
 
     // Check for wildcard imports
@@ -178,7 +178,7 @@ export class CallResolver {
           const funcQn = `${wildcardModule}${cs.SEPARATOR_DOT}${callName}`;
           if (this.functionRegistry.has(funcQn)) {
             const funcType = this.functionRegistry.get(funcQn);
-            return [this.nodeTypeToLabel(funcType!), funcQn];
+            return [this.nodeTypeToLabel(funcType!), funcQn, 1.0];
           }
         }
       }
@@ -190,10 +190,10 @@ export class CallResolver {
   /**
    * Resolve a builtin function call
    */
-  resolveBuiltinCall(callName: string): [NodeLabel, string] | null {
+  resolveBuiltinCall(callName: string): [NodeLabel, string, number] | null {
     // Check JavaScript builtins
     if (cs.JS_BUILTIN_PATTERNS.has(callName)) {
-      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`];
+      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`, 0.3];
     }
 
     // Simple builtin names
@@ -208,7 +208,7 @@ export class CallResolver {
     ]);
 
     if (simpleBuiltins.has(callName)) {
-      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`];
+      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`, 0.3];
     }
 
     return null;
@@ -217,11 +217,11 @@ export class CallResolver {
   /**
    * Resolve C++ operator call
    */
-  resolveCppOperatorCall(callName: string, moduleQn: string): [NodeLabel, string] | null {
+  resolveCppOperatorCall(callName: string, moduleQn: string): [NodeLabel, string, number] | null {
     if (callName.startsWith(cs.OPERATOR_PREFIX)) {
       const operatorQn = cs.CPP_OPERATORS[callName];
       if (operatorQn) {
-        return [NodeLabel.FUNCTION, operatorQn];
+        return [NodeLabel.FUNCTION, operatorQn, 0.3];
       }
     }
     return null;
@@ -234,7 +234,7 @@ export class CallResolver {
     callNode: TreeSitterNode,
     moduleQn: string,
     localVarTypes: Map<string, string>
-  ): [NodeLabel, string] | null {
+  ): [NodeLabel, string, number] | null {
     const objectNode = callNode.childForFieldName('object');
     const nameNode = callNode.childForFieldName('name');
 
@@ -251,7 +251,7 @@ export class CallResolver {
         if (objType) {
           const methodQn = `${objType}${cs.SEPARATOR_DOT}${methodName}`;
           if (this.functionRegistry.has(methodQn)) {
-            return [NodeLabel.METHOD, methodQn];
+            return [NodeLabel.METHOD, methodQn, 1.0];
           }
         }
       }
@@ -474,7 +474,7 @@ export class CallProcessor implements CallProcessorProtocol {
       if (!callName) continue;
 
       // Try different resolution strategies
-      let calleeInfo: [NodeLabel, string] | null = null;
+      let calleeInfo: [NodeLabel, string, number] | null = null;
 
       // Java method invocation has special handling
       if (language === SupportedLanguage.JAVA && callNode.type === 'method_invocation') {
@@ -503,7 +503,7 @@ export class CallProcessor implements CallProcessorProtocol {
 
       if (!calleeInfo) continue;
 
-      const [calleeType, calleeQn] = calleeInfo;
+      const [calleeType, calleeQn, confidence] = calleeInfo;
 
       // Skip constructor calls (treated as class references)
       if (calleeType === NodeLabel.CLASS) {
@@ -511,13 +511,14 @@ export class CallProcessor implements CallProcessorProtocol {
         continue;
       }
 
-      logger.debug(`Found call: ${callerQn} -> ${calleeQn} (${calleeType})`);
+      logger.debug(`Found call: ${callerQn} -> ${calleeQn} (${calleeType}, conf=${confidence})`);
 
-      // Create CALLS relationship
+      // Create CALLS relationship with confidence score
       this.ingestor.ensureRelationshipBatch(
         [callerType, cs.KEY_QUALIFIED_NAME, callerQn],
         cs.RelationshipType.CALLS,
-        [calleeType, cs.KEY_QUALIFIED_NAME, calleeQn]
+        [calleeType, cs.KEY_QUALIFIED_NAME, calleeQn],
+        { confidence }
       );
     }
   }

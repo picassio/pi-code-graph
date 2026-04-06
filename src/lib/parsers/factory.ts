@@ -19,6 +19,7 @@ import { StructureProcessor } from './structure-processor.js';
 import { DefinitionProcessor } from './definition-processor.js';
 import { CallProcessor } from './call-processor.js';
 import { buildWorkspaceMap, type WorkspaceMap } from './workspace-resolver.js';
+import { loadTsconfigAliases, type TsconfigAliasMap } from './tsconfig-resolver.js';
 
 // =============================================================================
 // Function Registry Trie Implementation
@@ -154,6 +155,7 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
   private readonly unignorePaths: Set<string> | null;
   private readonly excludePaths: Set<string> | null;
   private readonly workspaceMap: WorkspaceMap;
+  private readonly tsconfigAliases: TsconfigAliasMap;
 
   // Cached processor instances
   private _importProcessor: ImportProcessor | null = null;
@@ -182,6 +184,7 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
     this.unignorePaths = options.unignorePaths ?? null;
     this.excludePaths = options.excludePaths ?? null;
     this.workspaceMap = buildWorkspaceMap(this.repoPath, this.projectName);
+    this.tsconfigAliases = loadTsconfigAliases(this.repoPath);
   }
 
   // ===========================================================================
@@ -195,7 +198,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.projectName,
         this.ingestor,
         this.functionRegistry,
-        this.workspaceMap
+        this.workspaceMap,
+        this.tsconfigAliases
       );
     }
     return this._importProcessor;
