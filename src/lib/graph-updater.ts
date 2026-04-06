@@ -716,20 +716,13 @@ export class GraphUpdater {
       logger.debug('[graph-updater] Removed from AST cache');
     }
 
-    // Calculate module qualified name prefix
-    const relativePath = relative(this.repoPath, filePath);
-    const fileName = basename(filePath);
-    const pathParts =
-      fileName === cs.INIT_PY
-        ? dirname(relativePath).split('/')
-        : relativePath.replace(extname(relativePath), '').split('/');
+    // New format: keys start with '<file_path>:' (e.g., 'src/lib/foo.ts:Foo.bar').
+    const relativePath = relative(this.repoPath, filePath).replace(/\\/g, '/');
+    const filePrefix = `${relativePath}:`;
 
-    const moduleQnPrefix = [this.projectName, ...pathParts.filter(Boolean)].join(cs.SEPARATOR_DOT);
-
-    // Remove matching qualified names from function registry
     const qnsToRemove = new Set<string>();
     for (const qn of this.functionRegistry.keys()) {
-      if (qn.startsWith(`${moduleQnPrefix}.`) || qn === moduleQnPrefix) {
+      if (qn.startsWith(filePrefix) || qn === relativePath) {
         qnsToRemove.add(qn);
         this.functionRegistry.delete(qn);
       }

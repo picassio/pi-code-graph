@@ -11,6 +11,8 @@ import { logger } from '../logger.js';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
 import { SEPARATOR_DOT } from '../constants.js';
+// New-format workspace resolver: emits file paths (e.g., 'packages/ai/src/index.ts')
+// instead of dotted module paths.
 
 // =============================================================================
 // Types
@@ -96,7 +98,8 @@ export function buildWorkspaceMap(repoPath: string, projectName: string): Worksp
           if (!pkg.name) continue;
 
           const relativePath = relative(repoPath, dir).replace(/\\/g, '/');
-          const qualifiedPrefix = `${projectName}${SEPARATOR_DOT}${relativePath.replace(/\//g, SEPARATOR_DOT)}`;
+          // qualifiedPrefix is now the package's relative directory path (no extension)
+          const qualifiedPrefix = relativePath;
 
           // Build subpath map from package.json exports
           const subpathMap = buildSubpathMap(pkg, dir);
@@ -180,7 +183,7 @@ function createWorkspaceMap(packages: Map<string, WorkspacePackage>): WorkspaceM
         const pkg = packages.get(importPath)!;
         const mainEntry = pkg.subpathMap.get('.');
         if (mainEntry) {
-          return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${mainEntry}`;
+          return `${pkg.qualifiedPrefix}/${mainEntry}`;
         }
         return pkg.qualifiedPrefix;
       }
@@ -189,16 +192,12 @@ function createWorkspaceMap(packages: Map<string, WorkspacePackage>): WorkspaceM
       for (const [pkgName, pkg] of packages) {
         if (importPath.startsWith(pkgName + '/')) {
           const subpath = './' + importPath.slice(pkgName.length + 1);
-
-          // Check exports map first (e.g., "./oauth" → "src.oauth")
           const exportResolved = pkg.subpathMap.get(subpath);
           if (exportResolved) {
-            return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${exportResolved}`;
+            return `${pkg.qualifiedPrefix}/${exportResolved}`;
           }
-
-          // Fallback: direct subpath mapping
           const rawSubpath = importPath.slice(pkgName.length + 1);
-          return `${pkg.qualifiedPrefix}${SEPARATOR_DOT}${rawSubpath.replace(/\//g, SEPARATOR_DOT)}`;
+          return `${pkg.qualifiedPrefix}/${rawSubpath}`;
         }
       }
 
@@ -258,29 +257,21 @@ function buildSubpathMap(pkg: any, pkgDir: string): Map<string, string> {
  *       "./dist/providers/google.js" → "src.providers.google"
  */
 function distToSrc(distPath: string, pkgDir: string): string | null {
-  // Remove leading ./ and extension
+  // Returns a package-relative file path with extension (e.g., 'src/oauth.ts').
   let p = distPath.replace(/^\.?\//, '').replace(/\.[^.]+$/, '');
 
-  // Try replacing dist/build/out with src
   const distPrefixes = ['dist/', 'build/', 'out/', 'lib/'];
   for (const prefix of distPrefixes) {
     if (p.startsWith(prefix)) {
       const srcEquiv = 'src/' + p.slice(prefix.length);
-      // Check if src file exists
       const srcTs = join(pkgDir, srcEquiv + '.ts');
       const srcTsx = join(pkgDir, srcEquiv + '.tsx');
       const srcIndex = join(pkgDir, srcEquiv, 'index.ts');
-      if (existsSync(srcTs) || existsSync(srcTsx)) {
-        return srcEquiv.replace(/\//g, SEPARATOR_DOT);
-      }
-      if (existsSync(srcIndex)) {
-        return (srcEquiv + '.index').replace(/\//g, SEPARATOR_DOT);
-      }
-      // Fallback: use src path even if file not found (might be generated)
-      return srcEquiv.replace(/\//g, SEPARATOR_DOT);
+      if (existsSync(srcTs)) return srcEquiv + '.ts';
+      if (existsSync(srcTsx)) return srcEquiv + '.tsx';
+      if (existsSync(srcIndex)) return srcEquiv + '/index.ts';
+      return srcEquiv + '.ts';
     }
   }
-
-  // No dist prefix — use as-is
-  return p.replace(/\//g, SEPARATOR_DOT);
+  return p + '.ts';
 }

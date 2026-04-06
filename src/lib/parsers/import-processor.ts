@@ -29,6 +29,7 @@ import {
   EMPTY_TSCONFIG_ALIASES,
   type TsconfigAliasMap,
 } from './tsconfig-resolver.js';
+import { buildQualifiedName, normalizeFilePath } from './node-id.js';
 
 // =============================================================================
 // Cache Functions
@@ -374,7 +375,9 @@ export class ImportProcessor implements ImportProcessorProtocol {
   }
 
   private resolveJsModulePath(importPath: string, currentModule: string): string {
-    // tsconfig path aliases are tried first: rewrite e.g. "@/foo/bar" → "src/foo/bar".
+    // currentModule is now a file path like 'src/lib/foo.ts'.
+    // Output must also be a file path (module QN in new format).
+
     if (this.tsconfigAliases.hasAliases && !importPath.startsWith(cs.PATH_CURRENT_DIR)) {
       const rewritten = this.tsconfigAliases.rewrite(importPath);
       if (rewritten) {
@@ -383,7 +386,6 @@ export class ImportProcessor implements ImportProcessorProtocol {
       }
     }
 
-    // Workspace map (monorepo) is always tried next.
     if (!importPath.startsWith(cs.PATH_CURRENT_DIR)) {
       if (this.workspaceMap) {
         const resolved = this.workspaceMap.resolve(importPath);
@@ -392,24 +394,28 @@ export class ImportProcessor implements ImportProcessorProtocol {
           return resolved;
         }
       }
-
-      const primary = importPath.replace(/\//g, cs.SEPARATOR_DOT);
+      // Primary guess: the import path as-is (no extension yet — suffix fallback will fix).
+      const primary = normalizeFilePath(importPath);
       return this.applySuffixFallback(importPath, primary);
     }
 
-    const currentParts = currentModule.split(cs.SEPARATOR_DOT).slice(0, -1);
+    // Relative import: resolve against current module's directory.
+    const currentDir = currentModule.includes('/')
+      ? currentModule.slice(0, currentModule.lastIndexOf('/'))
+      : '';
+    const dirParts = currentDir ? currentDir.split('/') : [];
     const importParts = importPath.split(cs.SEPARATOR_SLASH);
 
     for (const part of importParts) {
       if (part === cs.PATH_CURRENT_DIR) continue;
       if (part === cs.PATH_PARENT_DIR) {
-        if (currentParts.length > 0) currentParts.pop();
+        if (dirParts.length > 0) dirParts.pop();
       } else if (part) {
-        currentParts.push(part);
+        dirParts.push(part);
       }
     }
 
-    const primary = currentParts.join(cs.SEPARATOR_DOT);
+    const primary = dirParts.join('/');
     return this.applySuffixFallback(importPath, primary);
   }
 
@@ -438,11 +444,12 @@ export class ImportProcessor implements ImportProcessorProtocol {
     sourceModule: string,
     currentModule: string
   ): void {
+    // sourceModule is a file-path module QN (e.g. 'src/lib/foo.ts').
+    // Import target QNs are built with buildQualifiedName → 'path:local'.
     for (const child of clauseNode.children) {
       if (child.type === 'identifier') {
-        // Default import
         const importedName = safeDecodeWithFallback(child);
-        this.importMapping[currentModule][importedName] = `${sourceModule}.default`;
+        this.importMapping[currentModule][importedName] = buildQualifiedName(sourceModule, 'default');
       } else if (child.type === 'named_imports') {
         for (const grandchild of child.children) {
           if (grandchild.type === 'import_specifier') {
@@ -452,7 +459,7 @@ export class ImportProcessor implements ImportProcessorProtocol {
               const importedName = safeDecodeWithFallback(nameNode);
               const localName = aliasNode ? safeDecodeWithFallback(aliasNode) : importedName;
               this.importMapping[currentModule][localName] =
-                `${sourceModule}${cs.SEPARATOR_DOT}${importedName}`;
+                buildQualifiedName(sourceModule, importedName);
             }
           }
         }
@@ -530,7 +537,7 @@ export class ImportProcessor implements ImportProcessorProtocol {
                 ? safeDecodeWithFallback(aliasNode)
                 : originalName;
               this.importMapping[currentModule][exportedName] =
-                `${sourceModule}${cs.SEPARATOR_DOT}${originalName}`;
+                buildQualifiedName(sourceModule, originalName);
             }
           }
         }
@@ -875,11 +882,12 @@ export class ImportProcessor implements ImportProcessorProtocol {
         }
         break;
       case SupportedLanguage.JS:
-      case SupportedLanguage.TS:
-        if (this.isLocalJsImport(fullName)) {
-          return this.resolveJsInternalModule(fullName);
-        }
-        break;
+      case SupportedLanguage.TS: {
+        // New format: fullName is either 'path:local' or 'path' (module only).
+        const colonIdx = fullName.lastIndexOf(':');
+        if (colonIdx !== -1) return fullName.slice(0, colonIdx);
+        return fullName;
+      }
       case SupportedLanguage.RUST:
         return this.resolveRustImportPath(fullName, moduleQn);
     }

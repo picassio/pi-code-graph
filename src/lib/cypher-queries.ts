@@ -24,6 +24,7 @@ DETACH DELETE p, container, defined
 // Delete Queries (Used by graph updater)
 // =============================================================================
 
+// Module nodes still carry `path` (relative path) for back-compat with file deletion.
 export const CYPHER_DELETE_MODULE = 'MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c';
 export const CYPHER_DELETE_FILE = 'MATCH (f:File {path: $path}) DETACH DELETE f';
 export const CYPHER_DELETE_FOLDER = 'MATCH (f:Folder {path: $path}) DETACH DELETE f';
@@ -91,6 +92,30 @@ export const CYPHER_EXAMPLE_LIMIT_ONE =
 export const CYPHER_EXAMPLE_CLASS_METHODS = `MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
 WHERE c.name = 'UserService'
 RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
+LIMIT ${CYPHER_DEFAULT_LIMIT}`;
+
+// -----------------------------------------------------------------------------
+// New-format examples using project / file_path / local_name (PREFERRED)
+// -----------------------------------------------------------------------------
+
+export const CYPHER_EXAMPLE_NODES_IN_FILE = `MATCH (n)
+WHERE n.project = $project AND n.file_path = 'src/lib/vector-store.ts'
+RETURN n.local_name AS local_name, n.file_path AS file_path, labels(n) AS type
+LIMIT ${CYPHER_DEFAULT_LIMIT}`;
+
+export const CYPHER_EXAMPLE_NODES_UNDER_DIR = `MATCH (n:Function|Method|Class)
+WHERE n.project = $project AND n.file_path STARTS WITH 'src/lib/'
+RETURN n.local_name AS local_name, n.file_path AS file_path, labels(n) AS type
+LIMIT ${CYPHER_DEFAULT_LIMIT}`;
+
+export const CYPHER_EXAMPLE_CLASS_BY_LOCAL_NAME = `MATCH (c:Class)
+WHERE c.project = $project AND c.local_name ENDS WITH 'VectorStore'
+RETURN c.local_name AS local_name, c.file_path AS file_path, labels(c) AS type
+LIMIT ${CYPHER_DEFAULT_LIMIT}`;
+
+export const CYPHER_EXAMPLE_METHODS_OF_CLASS_NEW = `MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
+WHERE c.project = $project AND c.file_path = 'src/lib/vector-store.ts' AND c.local_name = 'VectorStore'
+RETURN c.local_name AS className, m.local_name AS methodName, m.file_path AS file_path, labels(m) AS type
 LIMIT ${CYPHER_DEFAULT_LIMIT}`;
 
 // =============================================================================
@@ -257,6 +282,10 @@ export const EXAMPLE_QUERIES = {
   filesInFolder: CYPHER_EXAMPLE_FILES_IN_FOLDER,
   limitOne: CYPHER_EXAMPLE_LIMIT_ONE,
   classMethods: CYPHER_EXAMPLE_CLASS_METHODS,
+  nodesInFile: CYPHER_EXAMPLE_NODES_IN_FILE,
+  nodesUnderDir: CYPHER_EXAMPLE_NODES_UNDER_DIR,
+  classByLocalName: CYPHER_EXAMPLE_CLASS_BY_LOCAL_NAME,
+  methodsOfClassNew: CYPHER_EXAMPLE_METHODS_OF_CLASS_NEW,
 } as const;
 
 /**

@@ -146,6 +146,8 @@ export class StructureProcessor implements StructureProcessorProtocol {
           [cs.KEY_NAME]: basename(root),
           [cs.KEY_PATH]: relativeRoot || '.',
           [cs.KEY_ABSOLUTE_PATH]: resolve(root),
+          [cs.KEY_PROJECT]: this.projectName,
+          [cs.KEY_FILE_PATH]: relativeRoot || '.',
         });
 
         const parentIdentifier = this.getParentIdentifier(parentRelPath, parentContainerQn);
@@ -164,6 +166,8 @@ export class StructureProcessor implements StructureProcessorProtocol {
           [cs.KEY_PATH]: relativeRoot,
           [cs.KEY_NAME]: basename(root),
           [cs.KEY_ABSOLUTE_PATH]: resolve(root),
+          [cs.KEY_PROJECT]: this.projectName,
+          [cs.KEY_FILE_PATH]: relativeRoot,
         });
 
         const parentIdentifier = this.getParentIdentifier(parentRelPath, parentContainerQn);
@@ -188,6 +192,8 @@ export class StructureProcessor implements StructureProcessorProtocol {
       [cs.KEY_NAME]: fileName,
       [cs.KEY_EXTENSION]: extname(filePath),
       [cs.KEY_ABSOLUTE_PATH]: resolve(filePath),
+      [cs.KEY_PROJECT]: this.projectName,
+      [cs.KEY_FILE_PATH]: relativeFilepath,
     });
 
     this.ingestor.ensureRelationshipBatch(

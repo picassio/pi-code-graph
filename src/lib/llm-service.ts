@@ -111,12 +111,12 @@ const NODE_SCHEMAS: NodeSchema[] = [
   { label: NodeLabel.FOLDER, properties: 'path (unique), name, absolute_path' },
   { label: NodeLabel.FILE, properties: 'path (unique), name, absolute_path, extension' },
   { label: NodeLabel.MODULE, properties: 'qualified_name (unique), path, name, is_external' },
-  { label: NodeLabel.CLASS, properties: 'qualified_name (unique), name, docstring, start_line, end_line' },
-  { label: NodeLabel.FUNCTION, properties: 'qualified_name (unique), name, docstring, parameters, decorators, start_line, end_line' },
-  { label: NodeLabel.METHOD, properties: 'qualified_name (unique), name, docstring, parameters, decorators, start_line, end_line' },
-  { label: NodeLabel.INTERFACE, properties: 'qualified_name (unique), name, start_line, end_line' },
-  { label: NodeLabel.ENUM, properties: 'qualified_name (unique), name, start_line, end_line' },
-  { label: NodeLabel.TYPE, properties: 'qualified_name (unique), name, start_line, end_line' },
+  { label: NodeLabel.CLASS, properties: 'qualified_name (unique), name, docstring, start_line, end_line, project, file_path, local_name (PREFERRED for new queries)' },
+  { label: NodeLabel.FUNCTION, properties: 'qualified_name (unique), name, docstring, parameters, decorators, start_line, end_line, project, file_path, local_name (PREFERRED for new queries)' },
+  { label: NodeLabel.METHOD, properties: 'qualified_name (unique), name, docstring, parameters, decorators, start_line, end_line, project, file_path, local_name (PREFERRED for new queries)' },
+  { label: NodeLabel.INTERFACE, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path, local_name' },
+  { label: NodeLabel.ENUM, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path, local_name' },
+  { label: NodeLabel.TYPE, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path, local_name' },
   { label: NodeLabel.EXTERNAL_PACKAGE, properties: 'name (unique), version_spec' },
 ];
 
@@ -177,7 +177,8 @@ const CYPHER_QUERY_RULES = `**2. Critical Cypher Query Rules**
 - **Use \`STARTS WITH\` for Paths**: When matching paths, always use \`STARTS WITH\` for robustness (e.g., \`WHERE n.path STARTS WITH 'workflows/src'\`). Do not use \`=\`.
 - **Use \`ENDS WITH\` for qualified_name**: The \`qualified_name\` property contains full paths like \`'Project.folder.subfolder.ClassName'\`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use \`ENDS WITH\` to match: \`WHERE c.qualified_name ENDS WITH '.VatManager'\`. Do NOT use \`{name: 'VatManager'}\` equality matching.
 - **Use \`toLower()\` for Searches**: For case-insensitive searching on string properties, use \`toLower()\`.
-- **Querying Lists**: To check if a list property (like \`decorators\`) contains an item, use the \`ANY\` or \`IN\` clause (e.g., \`WHERE 'flow' IN n.decorators\`).`;
+- **Querying Lists**: To check if a list property (like \`decorators\`) contains an item, use the \`ANY\` or \`IN\` clause (e.g., \`WHERE 'flow' IN n.decorators\`).
+- **Prefer file_path / project / local_name for path-based queries**: Class, Function, Method, Interface, Enum, and Type nodes expose \`project\` (project name), \`file_path\` (repo-relative path like \`'src/lib/vector-store.ts'\`), and \`local_name\` (name within the file, e.g. \`'VectorStore.upsert'\`). For queries that filter by file or directory, prefer \`n.file_path STARTS WITH 'src/lib/'\` and \`n.project = $project\` over \`qualified_name\` string patterns. Use \`n.local_name ENDS WITH '.VatManager'\` (or \`= 'VatManager'\`) instead of \`qualified_name ENDS WITH\` when looking up a symbol by its short name.`;
 
 export function buildGraphSchemaAndRules(): string {
   return `You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **Memgraph knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.

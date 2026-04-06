@@ -30,6 +30,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { relative, dirname, basename, extname, resolve } from 'node:path';
 import { parse } from '../tree-sitter/index.js';
 import { extractClassFields, type ClassFieldRegistry } from './type-env.js';
+import { buildMethodLocalName, buildQualifiedName, buildModuleQualifiedName, normalizeFilePath } from './node-id.js';
 
 // =============================================================================
 // Definition Processor Implementation
@@ -104,6 +105,8 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.KEY_NAME]: fileName,
         [cs.KEY_PATH]: relativePath,
         [cs.KEY_ABSOLUTE_PATH]: resolve(filePath),
+        [cs.KEY_PROJECT]: this.projectName,
+        [cs.KEY_FILE_PATH]: relativePath,
       });
 
       // Link module to parent container
@@ -121,10 +124,10 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
       this.importProcessor.parseImports(rootNode, moduleQn, language, queries);
 
       // Ingest all functions
-      await this.ingestAllFunctions(rootNode, moduleQn, language, queries);
+      await this.ingestAllFunctions(rootNode, moduleQn, relativePath, language, queries);
 
       // Ingest all classes and their methods
-      await this.ingestClassesAndMethods(rootNode, moduleQn, language, queries);
+      await this.ingestClassesAndMethods(rootNode, moduleQn, relativePath, language, queries);
 
       return [rootNode, language];
     } catch (error) {
@@ -152,11 +155,14 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   // ===========================================================================
 
   private async ingestAllFunctions(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     rootNode: TreeSitterNode,
     moduleQn: string,
+    relativePath: string,
     language: SupportedLanguage,
     queries: Map<SupportedLanguage, LanguageQueries>
   ): Promise<void> {
+    const normalizedFilePath = normalizeFilePath(relativePath);
     const langQueries = queries.get(language);
     if (!langQueries?.functions) return;
 
@@ -195,6 +201,9 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.KEY_DECORATORS]: info.decorators.join(', '),
         [cs.KEY_DOCSTRING]: info.docstring,
         [cs.KEY_IS_EXPORTED]: info.isExported,
+        [cs.KEY_PROJECT]: this.projectName,
+        [cs.KEY_FILE_PATH]: normalizedFilePath,
+        [cs.KEY_LOCAL_NAME]: funcName,
       });
 
       // Link to module
@@ -215,9 +224,11 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   private async ingestClassesAndMethods(
     rootNode: TreeSitterNode,
     moduleQn: string,
+    relativePath: string,
     language: SupportedLanguage,
     queries: Map<SupportedLanguage, LanguageQueries>
   ): Promise<void> {
+    const normalizedFilePath = normalizeFilePath(relativePath);
     const langQueries = queries.get(language);
     if (!langQueries?.classes) return;
 
@@ -230,7 +241,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
       const className = this.extractClassName(classNode, language);
       if (!className) continue;
 
-      const classQn = `${moduleQn}${cs.SEPARATOR_DOT}${className}`;
+      const classQn = buildQualifiedName(normalizedFilePath, className);
 
       // Extract class info
       const info = this.extractClassInfo(classNode, className, classQn, config, language);
@@ -256,6 +267,9 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.KEY_DECORATORS]: info.decorators.join(', '),
         [cs.KEY_DOCSTRING]: info.docstring,
         [cs.KEY_IS_EXPORTED]: info.isExported,
+        [cs.KEY_PROJECT]: this.projectName,
+        [cs.KEY_FILE_PATH]: normalizedFilePath,
+        [cs.KEY_LOCAL_NAME]: className,
       });
 
       // Link to module
@@ -299,18 +313,21 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
 
       // Process methods inside the class
       logger.info(`Processing methods for class: ${classQn} (label=${nodeLabel})`);
-      await this.ingestMethodsInClass(classNode, classQn, moduleQn, language, queries, nodeLabel);
+      await this.ingestMethodsInClass(classNode, classQn, className, moduleQn, relativePath, language, queries, nodeLabel);
     }
   }
 
   private async ingestMethodsInClass(
     classNode: TreeSitterNode,
     classQn: string,
+    className: string,
     moduleQn: string,
+    relativePath: string,
     language: SupportedLanguage,
     queries: Map<SupportedLanguage, LanguageQueries>,
     classLabel: string = cs.NodeLabel.CLASS
   ): Promise<void> {
+    const normalizedFilePath = normalizeFilePath(relativePath);
     const langQueries = queries.get(language);
     if (!langQueries?.functions) return;
 
@@ -357,6 +374,9 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         [cs.KEY_DECORATORS]: info.decorators.join(', '),
         [cs.KEY_DOCSTRING]: info.docstring,
         [cs.KEY_IS_EXPORTED]: info.isExported,
+        [cs.KEY_PROJECT]: this.projectName,
+        [cs.KEY_FILE_PATH]: normalizedFilePath,
+        [cs.KEY_LOCAL_NAME]: buildMethodLocalName(className, methodName),
       });
 
       // Link to class (use actual label, not hardcoded CLASS)
@@ -374,16 +394,9 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   // Helper Methods
   // ===========================================================================
 
-  private buildModuleQn(relativePath: string, fileName: string): string {
-    // Remove extension and build qualified name
-    const parts = relativePath.replace(/\.[^.]+$/, '').split('/').filter(Boolean);
-
-    // Handle special files like __init__.py
-    if (fileName === cs.INIT_PY || fileName === cs.MOD_RS) {
-      return [this.projectName, ...parts.slice(0, -1)].join(cs.SEPARATOR_DOT);
-    }
-
-    return [this.projectName, ...parts].join(cs.SEPARATOR_DOT);
+  private buildModuleQn(relativePath: string, _fileName: string): string {
+    // New format: module QN is the normalized file path (e.g., 'src/lib/foo.ts')
+    return buildModuleQualifiedName(relativePath);
   }
 
   private getParentIdentifier(
@@ -645,7 +658,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     if (resolved) return resolved;
 
     // Check if it's a local class
-    const localQn = `${moduleQn}${cs.SEPARATOR_DOT}${baseClassName}`;
+    const localQn = buildQualifiedName(moduleQn, baseClassName);
     if (this.functionRegistry.has(localQn)) {
       return localQn;
     }
@@ -699,10 +712,10 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     }
 
     pathParts.reverse();
-    if (pathParts.length > 0) {
-      return `${moduleQn}${cs.SEPARATOR_DOT}${pathParts.join(cs.SEPARATOR_DOT)}${cs.SEPARATOR_DOT}${funcName}`;
-    }
-    return `${moduleQn}${cs.SEPARATOR_DOT}${funcName}`;
+    const localName = pathParts.length > 0
+      ? `${pathParts.join(cs.SEPARATOR_DOT)}${cs.SEPARATOR_DOT}${funcName}`
+      : funcName;
+    return buildQualifiedName(moduleQn, localName);
   }
 
   private registerSimpleName(simpleName: string, qualifiedName: string): void {

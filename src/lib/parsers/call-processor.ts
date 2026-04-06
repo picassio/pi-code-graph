@@ -25,6 +25,7 @@ import {
 } from './base.js';
 import * as cs from '../constants.js';
 import { relative, dirname, basename } from 'node:path';
+import { buildQualifiedName, buildModuleQualifiedName, buildMethodLocalName, parseQualifiedName } from './node-id.js';
 
 // =============================================================================
 // Call Resolver
@@ -71,7 +72,12 @@ export class CallResolver {
     // Must start with 'this', 'self', or a class name in context
     let currentType: string | undefined;
     if (parts[0] === 'this' || parts[0] === 'self') {
-      currentType = classContext ? classContext.split(cs.SEPARATOR_DOT).pop() : undefined;
+      // classContext is a class QN 'path:Class' or 'path:Outer.Inner'; take last dot-segment
+      if (classContext) {
+        const parsed = parseQualifiedName(classContext);
+        const local = parsed ? parsed.localName : classContext;
+        currentType = local.split(cs.SEPARATOR_DOT).pop();
+      }
     } else {
       // Could be a variable — we don't have local type env here (would need per-file)
       // For now, only handle this.*
@@ -80,8 +86,7 @@ export class CallResolver {
     if (!currentType) return null;
 
     // Walk chain through field types: this.a.b.c.method
-    // parts = ['this', 'a', 'b', 'c', 'method']
-    // Walk parts[1..-2], each resolving field → next type
+    // The registry is still keyed by short class name (backwards-compatible).
     for (let i = 1; i < parts.length - 1; i++) {
       const fieldName = parts[i];
       const fields = this.classFieldRegistry.get(currentType);
@@ -93,7 +98,7 @@ export class CallResolver {
 
     // Final part is the method name
     const methodName = parts[parts.length - 1];
-    // Find the method QN: look for anything ending in .{currentType}.{methodName}
+    // New-format QN: `src/lib/foo.ts:ClassName.method` — ends with `.{ClassName}.{method}`
     const suffix = `.${currentType}.${methodName}`;
     const candidates = this.functionRegistry.findEndingWith(methodName);
     for (const qn of candidates) {
@@ -135,32 +140,39 @@ export class CallResolver {
     const objName = parts.slice(0, -1).join(cs.SEPARATOR_DOT);
     const methodName = parts[parts.length - 1];
 
-    // Check if obj is a local variable with known type
+    // Check if obj is a local variable with known type.
+    // objType is a short class name; look up by suffix match on the registry.
     const objType = localVarTypes.get(objName);
     if (objType) {
-      const methodQn = `${objType}${cs.SEPARATOR_DOT}${methodName}`;
-      if (this.functionRegistry.has(methodQn)) {
-        return [NodeLabel.METHOD, methodQn, 1.0];
+      const suffix = `.${objType}.${methodName}`;
+      const candidates = this.functionRegistry.findEndingWith(methodName)
+        .filter(qn => qn.endsWith(suffix));
+      if (candidates.length >= 1) {
+        return [NodeLabel.METHOD, candidates[0], 1.0];
       }
     }
 
-    // Check if obj is an imported module
+    // Check if obj is an imported module.
+    // importedModule is either a module QN (file path like 'src/lib/foo.ts') or
+    // a full QN (file path + `:local_name`).
     const importedModule = this.importProcessor.resolveImport(objName, moduleQn);
     if (importedModule) {
-      const funcQn = `${importedModule}${cs.SEPARATOR_DOT}${methodName}`;
+      const funcQn = importedModule.includes(':')
+        ? `${importedModule}${cs.SEPARATOR_DOT}${methodName}`
+        : buildQualifiedName(importedModule, methodName);
       if (this.functionRegistry.has(funcQn)) {
         const funcType = this.functionRegistry.get(funcQn);
         return [this.nodeTypeToLabel(funcType!), funcQn, 1.0];
       }
-      // Try re-export resolution: search by name within the same package prefix
-      const importPrefix = importedModule.split(cs.SEPARATOR_DOT).slice(0, 3).join(cs.SEPARATOR_DOT);
+      // Try re-export resolution by name within the same top-level dir
+      const parsed = parseQualifiedName(importedModule.includes(':') ? importedModule : `${importedModule}:x`);
+      const topDir = parsed ? parsed.filePath.split('/')[0] + '/' : '';
       const candidates = this.functionRegistry.findEndingWith(methodName)
-        .filter(qn => qn.startsWith(importPrefix));
+        .filter(qn => topDir && qn.startsWith(topDir));
       if (candidates.length === 1) {
         const funcType = this.functionRegistry.get(candidates[0]);
         return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
       }
-      // Return as potential external call — import resolved, name matched
       return [NodeLabel.FUNCTION, funcQn, 0.8];
     }
 
@@ -184,8 +196,8 @@ export class CallResolver {
       }
     }
 
-    // Check if it's a static method call (ClassName.method)
-    const staticMethodQn = `${moduleQn}${cs.SEPARATOR_DOT}${callName}`;
+    // Check if it's a static method call (ClassName.method) inside the same file.
+    const staticMethodQn = buildQualifiedName(moduleQn, callName);
     if (this.functionRegistry.has(staticMethodQn)) {
       return [NodeLabel.METHOD, staticMethodQn, 1.0];
     }
@@ -199,7 +211,7 @@ export class CallResolver {
     classContext: string | null
   ): [NodeLabel, string, number] | null {
     // Check local scope first
-    const localQn = `${moduleQn}${cs.SEPARATOR_DOT}${callName}`;
+    const localQn = buildQualifiedName(moduleQn, callName);
     if (this.functionRegistry.has(localQn)) {
       const funcType = this.functionRegistry.get(localQn);
       return [this.nodeTypeToLabel(funcType!), localQn, 1.0];
@@ -221,10 +233,11 @@ export class CallResolver {
         return [this.nodeTypeToLabel(funcType!), importedQn, 1.0];
       }
       // Import target not in registry — might be a re-export.
-      // Try finding the function by name in the same package prefix.
-      const importPrefix = importedQn.split(cs.SEPARATOR_DOT).slice(0, 3).join(cs.SEPARATOR_DOT);
+      // Try finding the function by name in the same top-level dir.
+      const parsed = parseQualifiedName(importedQn.includes(':') ? importedQn : `${importedQn}:x`);
+      const topDir = parsed ? parsed.filePath.split('/')[0] + '/' : '';
       const candidates = this.functionRegistry.findEndingWith(callName)
-        .filter(qn => qn.startsWith(importPrefix));
+        .filter(qn => topDir && qn.startsWith(topDir));
       if (candidates.length === 1) {
         const funcType = this.functionRegistry.get(candidates[0]);
         return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
@@ -238,7 +251,9 @@ export class CallResolver {
       for (const [key, value] of Object.entries(moduleImports)) {
         if (key.startsWith('*')) {
           const wildcardModule = value;
-          const funcQn = `${wildcardModule}${cs.SEPARATOR_DOT}${callName}`;
+          const funcQn = wildcardModule.includes(':')
+            ? `${wildcardModule}${cs.SEPARATOR_DOT}${callName}`
+            : buildQualifiedName(wildcardModule, callName);
           if (this.functionRegistry.has(funcQn)) {
             const funcType = this.functionRegistry.get(funcQn);
             return [this.nodeTypeToLabel(funcType!), funcQn, 1.0];
@@ -383,6 +398,7 @@ export class CallProcessor implements CallProcessorProtocol {
 
     try {
       const fileName = basename(filePath);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       let moduleQn = this.buildModuleQn(relativePath, fileName);
 
       // Process calls in top-level functions
@@ -455,7 +471,7 @@ export class CallProcessor implements CallProcessorProtocol {
       const className = this.getClassNameForNode(classNode, language);
       if (!className) continue;
 
-      const classQn = `${moduleQn}${cs.SEPARATOR_DOT}${className}`;
+      const classQn = buildQualifiedName(moduleQn, className);
 
       const bodyNode = classNode.childForFieldName('body');
       if (bodyNode) {
@@ -482,7 +498,7 @@ export class CallProcessor implements CallProcessorProtocol {
       const methodName = this.extractFunctionName(methodNode, language);
       if (!methodName) continue;
 
-      const methodQn = `${classQn}${cs.SEPARATOR_DOT}${methodName}`;
+      const methodQn = `${classQn}${cs.SEPARATOR_DOT}${methodName}`; // classQn is 'path:Class', append '.method'
 
       this.ingestFunctionCalls(
         methodNode,
@@ -657,14 +673,8 @@ export class CallProcessor implements CallProcessorProtocol {
     return cs.CPP_OPERATOR_SYMBOL_MAP[operator] ?? cs.CPP_FALLBACK_OPERATOR;
   }
 
-  private buildModuleQn(relativePath: string, fileName: string): string {
-    const parts = relativePath.replace(/\.[^.]+$/, '').split('/').filter(Boolean);
-
-    if (fileName === cs.INIT_PY || fileName === cs.MOD_RS) {
-      return [this.projectName, ...parts.slice(0, -1)].join(cs.SEPARATOR_DOT);
-    }
-
-    return [this.projectName, ...parts].join(cs.SEPARATOR_DOT);
+  private buildModuleQn(relativePath: string, _fileName: string): string {
+    return buildModuleQualifiedName(relativePath);
   }
 
   private extractFunctionName(funcNode: TreeSitterNode, language: SupportedLanguage): string | null {
@@ -724,10 +734,10 @@ export class CallProcessor implements CallProcessorProtocol {
     }
 
     pathParts.reverse();
-    if (pathParts.length > 0) {
-      return `${moduleQn}${cs.SEPARATOR_DOT}${pathParts.join(cs.SEPARATOR_DOT)}${cs.SEPARATOR_DOT}${funcName}`;
-    }
-    return `${moduleQn}${cs.SEPARATOR_DOT}${funcName}`;
+    const localName = pathParts.length > 0
+      ? `${pathParts.join(cs.SEPARATOR_DOT)}${cs.SEPARATOR_DOT}${funcName}`
+      : funcName;
+    return buildQualifiedName(moduleQn, localName);
   }
 
   private extractCaptures(
