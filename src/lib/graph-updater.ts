@@ -64,6 +64,10 @@ export interface GraphUpdaterConfig {
   enableEmbeddings?: boolean;
   /** Semantic search service for embedding generation and vector storage */
   semanticSearchService?: SemanticSearchService;
+  /** Enable community detection via Memgraph Leiden (default false) */
+  enableCommunities?: boolean;
+  /** Enable process detection via BFS from entry points (default false) */
+  enableProcesses?: boolean;
 }
 
 /** Query protocol for services that support Cypher queries */
@@ -576,6 +580,8 @@ export class GraphUpdater {
   private readonly hashCacheFilename: string;
   private readonly flushInterval: number;
   private readonly enableEmbeddings: boolean;
+  private readonly enableCommunities: boolean;
+  private readonly enableProcesses: boolean;
   private readonly semanticSearchService?: SemanticSearchService;
   private readonly onProgress?: ProgressCallback;
 
@@ -614,6 +620,8 @@ export class GraphUpdater {
     this.flushInterval = config.flushInterval ?? DEFAULT_FLUSH_INTERVAL;
     this.semanticSearchService = config.semanticSearchService;
     this.enableEmbeddings = config.enableEmbeddings ?? (config.semanticSearchService != null);
+    this.enableCommunities = config.enableCommunities ?? false;
+    this.enableProcesses = config.enableProcesses ?? false;
     this.onProgress = config.onProgress;
 
     // Initialize registries
@@ -701,6 +709,56 @@ export class GraphUpdater {
     if (this.enableEmbeddings) {
       logger.info('[graph-updater] Pass 4: Generating embeddings...');
       await this.generateSemanticEmbeddings();
+    }
+
+    // Pass 5: Community detection (if enabled)
+    if (this.enableCommunities) {
+      logger.info('[graph-updater] Pass 5: Detecting communities...');
+      try {
+        const { detectCommunities } = await import('./community-detector.js');
+        const ingestor = this.ingestor as unknown as {
+          executeWrite?: (q: string, p?: Record<string, unknown>) => Promise<void>;
+          fetchAll?: (q: string, p?: Record<string, unknown>) => Promise<ResultRow[]>;
+        };
+        if (ingestor.executeWrite && ingestor.fetchAll) {
+          await detectCommunities(
+            {
+              executeWrite: ingestor.executeWrite.bind(this.ingestor),
+              fetchAll: ingestor.fetchAll.bind(this.ingestor),
+            },
+            this.projectName,
+          );
+        } else {
+          logger.warn('[graph-updater] Ingestor lacks query support, skipping community detection');
+        }
+      } catch (err) {
+        logger.warn(`[graph-updater] Community detection failed: ${(err as Error).message}`);
+      }
+    }
+
+    // Pass 6: Process detection (if enabled)
+    if (this.enableProcesses) {
+      logger.info('[graph-updater] Pass 6: Detecting processes...');
+      try {
+        const { detectProcesses } = await import('./process-detector.js');
+        const ingestor = this.ingestor as unknown as {
+          executeWrite?: (q: string, p?: Record<string, unknown>) => Promise<void>;
+          fetchAll?: (q: string, p?: Record<string, unknown>) => Promise<ResultRow[]>;
+        };
+        if (ingestor.executeWrite && ingestor.fetchAll) {
+          await detectProcesses(
+            {
+              executeWrite: ingestor.executeWrite.bind(this.ingestor),
+              fetchAll: ingestor.fetchAll.bind(this.ingestor),
+            },
+            this.projectName,
+          );
+        } else {
+          logger.warn('[graph-updater] Ingestor lacks query support, skipping process detection');
+        }
+      } catch (err) {
+        logger.warn(`[graph-updater] Process detection failed: ${(err as Error).message}`);
+      }
     }
   }
 

@@ -492,6 +492,106 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 			}
 		},
 	});
+
+	pi.registerTool({
+		name: "find_communities",
+		label: "Find Communities",
+		description: "List code communities (clusters of related code) detected by the Leiden algorithm or directory grouping. Useful for understanding high-level architecture and navigating by functional area.",
+		promptSnippet: "Find code communities / clusters in the current project's graph",
+		parameters: Type.Object({
+			name_pattern: Type.Optional(Type.String({ description: "Substring to match against community name or heuristic_label" })),
+			limit: Type.Optional(Type.Number({ description: "Max communities to return (default 50)" })),
+		}),
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			await ensureServices(ctx);
+			const manager = getServiceManager();
+			try {
+				const graphService = await manager.getMemgraphService();
+				if (signal?.aborted) return { content: [{ type: "text", text: "Cancelled" }], details: {} };
+
+				const { CYPHER_LIST_COMMUNITIES } = await import("./lib/cypher-queries.js");
+				const limit = (params as { limit?: number }).limit ?? 50;
+				const namePattern = (params as { name_pattern?: string }).name_pattern ?? null;
+				const rows = await graphService.fetchAll(CYPHER_LIST_COMMUNITIES, {
+					project: manager.getProjectName(),
+					namePattern,
+					limit,
+				});
+
+				if (!rows || rows.length === 0) {
+					return {
+						content: [{ type: "text", text: "No communities found. Run indexing with enableCommunities=true." }],
+						details: { communities: [], count: 0 },
+					};
+				}
+
+				const lines = rows.map((r) => {
+					const rec = r as Record<string, unknown>;
+					const cntRaw = rec.symbol_count;
+					const cnt = typeof cntRaw === "number" ? cntRaw : Number((cntRaw as { toNumber?: () => number })?.toNumber?.() ?? cntRaw ?? 0);
+					return `- ${rec.name as string} [${cnt} members, label: ${rec.heuristic_label as string}]`;
+				});
+				return {
+					content: [{ type: "text", text: `Found ${rows.length} communities:\n${lines.join("\n")}` }],
+					details: { communities: rows, count: rows.length },
+				};
+			} catch (err) {
+				const message = err instanceof Error ? err.message : "Unknown error";
+				throw new Error(`Failed to list communities: ${message}`);
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "find_processes",
+		label: "Find Processes",
+		description: "List detected execution-flow processes (BFS traces from entry points) for the current project. Optionally filter by entry point or process name substring.",
+		promptSnippet: "Find detected processes / execution flows in the current project's code graph",
+		parameters: Type.Object({
+			name_pattern: Type.Optional(Type.String({ description: "Substring to match against process name or entry_point_qn" })),
+			limit: Type.Optional(Type.Number({ description: "Max processes to return (default 50)" })),
+		}),
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			await ensureServices(ctx);
+			const manager = getServiceManager();
+			try {
+				const graphService = await manager.getMemgraphService();
+				if (signal?.aborted) return { content: [{ type: "text", text: "Cancelled" }], details: {} };
+
+				const { CYPHER_LIST_PROCESSES } = await import("./lib/cypher-queries.js");
+				const limit = (params as { limit?: number }).limit ?? 50;
+				const namePattern = (params as { name_pattern?: string }).name_pattern ?? null;
+				const rows = await graphService.fetchAll(CYPHER_LIST_PROCESSES, {
+					project: manager.getProjectName(),
+					namePattern,
+					limit,
+				});
+
+				if (!rows || rows.length === 0) {
+					return {
+						content: [{ type: "text", text: "No processes found. Run indexing with enableProcesses=true." }],
+						details: { processes: [], count: 0 },
+					};
+				}
+
+				const lines = rows.map((r) => {
+					const rec = r as Record<string, unknown>;
+					const stepRaw = rec.step_count;
+					const stepCount = typeof stepRaw === "number" ? stepRaw : Number((stepRaw as { toNumber?: () => number })?.toNumber?.() ?? stepRaw ?? 0);
+					return `- ${rec.name as string} [${stepCount} steps]\n  entry: ${rec.entry_point_qn as string}\n  terminal: ${rec.terminal_qn as string}`;
+				});
+				return {
+					content: [{ type: "text", text: `Found ${rows.length} processes:\n${lines.join("\n")}` }],
+					details: { processes: rows, count: rows.length },
+				};
+			} catch (err) {
+				const message = err instanceof Error ? err.message : "Unknown error";
+				throw new Error(`Failed to list processes: ${message}`);
+			}
+		},
+	});
 }
 
 // =============================================================================

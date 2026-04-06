@@ -172,6 +172,10 @@ export class ServiceManager {
 		}
 	}
 	
+	getProjectName(): string {
+		return this.projectName;
+	}
+
 	/**
 	 * Get or create the MemgraphService
 	 */

@@ -30,6 +30,32 @@ export const CYPHER_DELETE_FILE = 'MATCH (f:File {path: $path}) DETACH DELETE f'
 export const CYPHER_DELETE_FOLDER = 'MATCH (f:Folder {path: $path}) DETACH DELETE f';
 export const CYPHER_DELETE_CALLS = 'MATCH ()-[r:CALLS]->() DELETE r';
 
+// Delete all communities for a given project (and their MEMBER_OF edges).
+export const CYPHER_DELETE_COMMUNITIES =
+  'MATCH (c:Community {project: $project}) DETACH DELETE c';
+
+export const CYPHER_LIST_COMMUNITIES = `
+MATCH (c:Community {project: $project})
+WHERE $namePattern IS NULL OR c.name CONTAINS $namePattern OR c.heuristic_label CONTAINS $namePattern
+RETURN c.id AS id, c.name AS name, c.heuristic_label AS heuristic_label,
+       c.symbol_count AS symbol_count, c.cohesion AS cohesion
+ORDER BY c.symbol_count DESC
+LIMIT $limit
+`;
+
+// Delete all processes for a given project (and their HAS_STEP edges).
+export const CYPHER_DELETE_PROCESSES =
+  'MATCH (p:Process {project: $project}) DETACH DELETE p';
+
+export const CYPHER_LIST_PROCESSES = `
+MATCH (p:Process {project: $project})
+WHERE $namePattern IS NULL OR p.entry_point_qn CONTAINS $namePattern OR p.name CONTAINS $namePattern
+RETURN p.id AS id, p.name AS name, p.entry_point_qn AS entry_point_qn,
+       p.terminal_qn AS terminal_qn, p.step_count AS step_count, p.trace AS trace
+ORDER BY p.step_count DESC
+LIMIT $limit
+`;
+
 // =============================================================================
 // Path Queries (For orphan pruning)
 // =============================================================================
