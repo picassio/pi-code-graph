@@ -65,22 +65,25 @@ export class CallResolver {
    */
   private resolveDeepChain(
     parts: string[],
-    classContext: string | null
+    classContext: string | null,
+    localVarTypes?: Map<string, string>,
   ): [NodeLabel, string, number] | null {
     if (!this.classFieldRegistry || parts.length < 3) return null;
 
-    // Must start with 'this', 'self', or a class name in context
+    // Resolve the first part to a type:
+    //  - 'this'/'self' → enclosing class
+    //  - identifier → lookup in localVarTypes (Bug #3/#4 fix — handles 'authStorage.x.y' patterns)
     let currentType: string | undefined;
     if (parts[0] === 'this' || parts[0] === 'self') {
-      // classContext is a class QN 'path:Class' or 'path:Outer.Inner'; take last dot-segment
       if (classContext) {
         const parsed = parseQualifiedName(classContext);
         const local = parsed ? parsed.localName : classContext;
         currentType = local.split(cs.SEPARATOR_DOT).pop();
       }
+    } else if (localVarTypes && localVarTypes.has(parts[0])) {
+      // Variable with known type — use it as the chain start
+      currentType = localVarTypes.get(parts[0]);
     } else {
-      // Could be a variable — we don't have local type env here (would need per-file)
-      // For now, only handle this.*
       return null;
     }
     if (!currentType) return null;
@@ -131,12 +134,22 @@ export class CallResolver {
 
     // Deep chain resolution via class field registry
     // Handles: this.a.b.c.method() — walks field types through the registry
-    if (parts.length >= 3 && (parts[0] === 'this' || parts[0] === 'self')) {
-      const deepResult = this.resolveDeepChain(parts, classContext);
-      if (deepResult) {
-        return deepResult;
+    // Deep chain resolution: this.a.b.c.method() OR localVar.a.b.c.method()
+    // Tries class field registry to walk through the chain.
+    if (parts.length >= 3) {
+      const isThis = parts[0] === 'this' || parts[0] === 'self';
+      const isKnownVar = localVarTypes.has(parts[0]);
+      if (isThis || isKnownVar) {
+        const deepResult = this.resolveDeepChain(parts, classContext, localVarTypes);
+        if (deepResult) {
+          return deepResult;
+        }
       }
     }
+
+    // 2-part variable chain: localVar.field.method() (length 2 isn't deep, but check for 1-step field access)
+    // Skip for now — the existing 2-part objType lookup below handles direct method calls.
+
 
     // Method call: obj.method() or module.function()
     const objName = parts.slice(0, -1).join(cs.SEPARATOR_DOT);
@@ -144,11 +157,13 @@ export class CallResolver {
 
     // Check if obj is a local variable with known type.
     // objType is a short class name; look up by suffix match on the registry.
+    // Now uses both `:Class.method` (top-of-file) and `.Class.method` (nested) suffixes.
     const objType = localVarTypes.get(objName);
     if (objType) {
-      const suffix = `.${objType}.${methodName}`;
+      const colonSuffix = `:${objType}.${methodName}`;
+      const dotSuffix = `.${objType}.${methodName}`;
       const candidates = this.functionRegistry.findEndingWith(methodName)
-        .filter(qn => qn.endsWith(suffix));
+        .filter(qn => qn.endsWith(colonSuffix) || qn.endsWith(dotSuffix));
       if (candidates.length >= 1) {
         return [NodeLabel.METHOD, candidates[0], 1.0];
       }
@@ -543,8 +558,9 @@ export class CallProcessor implements CallProcessorProtocol {
     const langQueries = queries.get(language);
     if (!langQueries?.calls) return;
 
-    // Build local variable type map (simplified - would need type inference in production)
-    const localVarTypes = new Map<string, string>();
+    // Build local variable type map by walking the function body for declarations
+    // Handles: const x: Type = ..., let x = new Type(), const x = SomeStaticFactory.create()
+    const localVarTypes = this.extractLocalVarTypes(callerNode, language);
 
     const matches = langQueries.calls.matches(callerNode);
     const captures = this.extractCaptures(matches);
@@ -604,6 +620,260 @@ export class CallProcessor implements CallProcessorProtocol {
         { confidence }
       );
     }
+  }
+
+  /**
+   * Walk a function/method body to extract local variable types.
+   * Used by ingestFunctionCalls to populate localVarTypes for the call resolver.
+   *
+   * Handles common TypeScript/JavaScript patterns:
+   *   const x: User = ...               → x: User
+   *   const x = new User()              → x: User
+   *   const x = await new User()        → x: User
+   *   const x = SomeFactory.create(...) → x: SomeFactory (best effort, less precise)
+   *
+   * Only TS/JS for now.
+   */
+  private extractLocalVarTypes(
+    bodyNode: TreeSitterNode,
+    language: SupportedLanguage,
+  ): Map<string, string> {
+    const types = new Map<string, string>();
+    if (
+      language !== SupportedLanguage.TS &&
+      language !== SupportedLanguage.JS
+    ) {
+      return types;
+    }
+
+    // First, extract function parameters from the root body's enclosing function
+    // (handles: function foo(x: Type) { x.method() })
+    this.extractParamTypes(bodyNode, types);
+
+    const walk = (node: TreeSitterNode): void => {
+      // Don't descend into nested function/class definitions — they have their own scope
+      // (we'll process them separately)
+      const nestedScope =
+        node.type === 'function_declaration' ||
+        node.type === 'method_definition' ||
+        node.type === 'class_declaration' ||
+        node.type === 'class' ||
+        node.type === 'interface_declaration';
+
+      if (nestedScope && node !== bodyNode) {
+        return;
+      }
+
+      if (
+        node.type === 'lexical_declaration' ||
+        node.type === 'variable_declaration'
+      ) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child && child.type === 'variable_declarator') {
+            this.processDeclaratorForTypes(child, types);
+          }
+        }
+      }
+
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (c) walk(c);
+      }
+    };
+
+    walk(bodyNode);
+    return types;
+  }
+
+  /**
+   * Extract typed parameters from a function body node.
+   * Handles: function foo(x: Type), const f = (x: Type) => ..., class method(x: Type)
+   */
+  private extractParamTypes(
+    bodyNode: TreeSitterNode,
+    types: Map<string, string>,
+  ): void {
+    // The bodyNode is usually the function/method node itself (when ingestFunctionCalls
+    // is called with the function node). Look for its 'parameters' field.
+    const paramsNode = bodyNode.childForFieldName('parameters');
+    if (!paramsNode) return;
+
+    for (let i = 0; i < paramsNode.childCount; i++) {
+      const param = paramsNode.child(i);
+      if (!param) continue;
+
+      // TS: required_parameter, optional_parameter
+      if (
+        param.type === 'required_parameter' ||
+        param.type === 'optional_parameter'
+      ) {
+        // Get name
+        const patternNode = param.childForFieldName('pattern') ?? param.namedChild(0);
+        if (!patternNode || patternNode.type !== 'identifier') continue;
+        const paramName = patternNode.text;
+        if (!paramName) continue;
+
+        // Get type
+        const paramType = this.extractParamType(param);
+        if (paramType) {
+          types.set(paramName, paramType);
+        }
+      }
+      // JS: formal_parameter (no types, skip)
+    }
+  }
+
+  /**
+   * Extract a type annotation from a parameter node.
+   */
+  private extractParamType(paramNode: TreeSitterNode): string | null {
+    // Walk children for type_annotation
+    for (let i = 0; i < paramNode.childCount; i++) {
+      const c = paramNode.child(i);
+      if (c && c.type === 'type_annotation') {
+        const inner = c.namedChild(0);
+        if (inner) {
+          return this.extractTypeFromNode(inner);
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract a (varName, type) pair from a variable_declarator node, if possible.
+   */
+  private processDeclaratorForTypes(
+    declNode: TreeSitterNode,
+    types: Map<string, string>,
+  ): void {
+    // Get var name
+    const nameNode = declNode.childForFieldName('name');
+    if (!nameNode || nameNode.type !== 'identifier') return;
+    const varName = nameNode.text;
+    if (!varName) return;
+
+    // Tier 0: explicit type annotation
+    const typeAnnNode = declNode.childForFieldName('type');
+    if (typeAnnNode) {
+      const inner = typeAnnNode.namedChild(0) ?? typeAnnNode;
+      const t = this.extractTypeFromNode(inner);
+      if (t) {
+        types.set(varName, t);
+        return;
+      }
+    }
+    // Walk children for type_annotation (alternative)
+    for (let i = 0; i < declNode.childCount; i++) {
+      const c = declNode.child(i);
+      if (c && c.type === 'type_annotation') {
+        const inner = c.namedChild(0);
+        if (inner) {
+          const t = this.extractTypeFromNode(inner);
+          if (t) {
+            types.set(varName, t);
+            return;
+          }
+        }
+      }
+    }
+
+    // Tier 1: constructor inference — const x = new User()
+    const valueNode = declNode.childForFieldName('value');
+    if (!valueNode) return;
+
+    let target = valueNode;
+    // Unwrap await: const x = await new User()
+    if (target.type === 'await_expression') {
+      const inner = target.namedChild(0);
+      if (inner) target = inner;
+    }
+
+    if (target.type === 'new_expression') {
+      const ctor = target.childForFieldName('constructor');
+      if (ctor) {
+        const t = this.extractTypeFromNode(ctor);
+        if (t) {
+          types.set(varName, t);
+          return;
+        }
+      }
+      const first = target.namedChild(0);
+      if (first) {
+        const t = this.extractTypeFromNode(first);
+        if (t) {
+          types.set(varName, t);
+          return;
+        }
+      }
+    }
+
+    // Tier 2: static factory call — const x = ClassName.create(...)
+    if (target.type === 'call_expression') {
+      const callee = target.childForFieldName('function');
+      if (callee && callee.type === 'member_expression') {
+        const obj = callee.childForFieldName('object');
+        const prop = callee.childForFieldName('property');
+        if (obj && obj.type === 'identifier' && prop) {
+          const className = obj.text;
+          const methodName = prop.text;
+          // Heuristic: factory methods like create, of, from, fromX, build, getInstance
+          // — likely return an instance of the class
+          if (
+            className &&
+            /^[A-Z]/.test(className) &&
+            methodName &&
+            /^(create|of|from|build|getInstance|inMemory|new)/.test(methodName)
+          ) {
+            types.set(varName, className);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract a simple type name from a type/identifier node.
+   *  Strips generics, nullable wrappers, and array suffixes.
+   */
+  private extractTypeFromNode(node: TreeSitterNode): string | null {
+    if (!node) return null;
+    let text = node.text;
+    if (!text) return null;
+
+    // Strip union with null/undefined: 'User | null' → 'User'
+    if (text.includes('|')) {
+      const parts = text.split('|').map((p) => p.trim()).filter(
+        (p) => p && p !== 'null' && p !== 'undefined' && p !== 'void',
+      );
+      if (parts.length > 0) text = parts[0]!;
+    }
+    // Strip trailing ?
+    text = text.replace(/\?$/, '').trim();
+    // Strip array suffix
+    text = text.replace(/\[\]$/, '').trim();
+    // Strip generic wrappers: 'Promise<User>' → 'User', 'Array<User>' → 'User'
+    const m = text.match(/^(?:Promise|Array|Map|Set|Record|Partial|Readonly|Awaited)<(.+)>$/);
+    if (m) {
+      text = m[1]!.trim();
+      // For Map<K,V>, take last (value type)
+      if (text.includes(',')) {
+        const parts = text.split(',').map((p) => p.trim());
+        text = parts[parts.length - 1]!;
+      }
+      // Recurse-strip nullable
+      text = text.split('|')[0]!.trim();
+    }
+    // Strip remaining generic args: 'Foo<T>' → 'Foo'
+    text = text.replace(/<.*$/, '').trim();
+
+    // Must be simple identifier
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(text)) {
+      return text;
+    }
+    return null;
   }
 
   private getCallTargetName(callNode: TreeSitterNode): string | null {

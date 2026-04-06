@@ -365,7 +365,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 		],
 		parameters: Type.Object({
 			target: Type.String({
-				description: "Module, class, or function to analyze (e.g., 'auth.UserService' or 'utils.validate')",
+				description: "Class, method, or function name. Accepts: bare name ('AuthStorage'), class.method ('AuthStorage.login'), or full qualified name ('src/lib/foo.ts:Foo.bar')",
 			}),
 			direction: Type.Optional(
 				StringEnum(["both", "dependents", "dependencies"] as const, {
@@ -375,7 +375,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 			),
 			depth: Type.Optional(
 				Type.Number({
-					description: "How many levels deep to analyze (default: 1, max: 5)",
+					description: "Traversal depth for transitive callers/callees (default: 1, max: 5). Higher values show indirect callers.",
 					minimum: 1,
 					maximum: 5,
 					default: 1,
@@ -401,7 +401,11 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 					return { content: [{ type: "text", text: "Analysis cancelled" }], details: {} };
 				}
 				
-				const depAnalysisResult = await tools.dependencyAnalyzer.analyzeDependencies(params.target);
+				// Pass depth so transitive traversal works (Bug #2 fix)
+				const depAnalysisResult = await tools.dependencyAnalyzer.analyzeDependencies(
+					params.target,
+					depth,
+				);
 				
 				if (signal?.aborted) {
 					return { content: [{ type: "text", text: "Analysis cancelled" }], details: {} };

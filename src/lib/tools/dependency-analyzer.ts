@@ -55,20 +55,44 @@ export interface DependencyAnalyzerConfig {
 // Cypher Queries for Dependency Analysis
 // =============================================================================
 
+// Direct callers (depth 1) — supports both new format (path:Class.method) and bare names
 const CYPHER_FIND_CALLERS = `
 MATCH (caller)-[r:CALLS]->(target)
 WHERE target.qualified_name = $qualified_name
   OR target.name = $name
-  OR target.qualified_name STARTS WITH ($qualified_name + '.')
-OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(caller)
+  OR target.local_name = $name
+  OR target.qualified_name ENDS WITH (':' + $name)
+  OR target.qualified_name ENDS WITH ('.' + $name)
 RETURN DISTINCT
   caller.qualified_name AS caller_qn,
   caller.name AS caller_name,
+  caller.local_name AS caller_local,
+  caller.file_path AS file_path,
   labels(caller) AS caller_type,
-  m.path AS file_path,
   caller.start_line AS start_line,
   caller.end_line AS end_line,
   coalesce(r.confidence, 1.0) AS confidence
+ORDER BY caller_qn
+LIMIT $limit
+`;
+
+// Transitive callers (variable depth) — uses CALLS* path traversal
+const CYPHER_FIND_CALLERS_TRANSITIVE = `
+MATCH (caller)-[:CALLS*1..$maxDepth]->(target)
+WHERE target.qualified_name = $qualified_name
+  OR target.name = $name
+  OR target.local_name = $name
+  OR target.qualified_name ENDS WITH (':' + $name)
+  OR target.qualified_name ENDS WITH ('.' + $name)
+RETURN DISTINCT
+  caller.qualified_name AS caller_qn,
+  caller.name AS caller_name,
+  caller.local_name AS caller_local,
+  caller.file_path AS file_path,
+  labels(caller) AS caller_type,
+  caller.start_line AS start_line,
+  caller.end_line AS end_line,
+  1.0 AS confidence
 ORDER BY caller_qn
 LIMIT $limit
 `;
@@ -77,13 +101,15 @@ const CYPHER_FIND_CALLEES = `
 MATCH (source)-[r:CALLS]->(callee)
 WHERE source.qualified_name = $qualified_name
   OR source.name = $name
-  OR source.qualified_name STARTS WITH ($qualified_name + '.')
-OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(callee)
+  OR source.local_name = $name
+  OR source.qualified_name ENDS WITH (':' + $name)
+  OR source.qualified_name ENDS WITH ('.' + $name)
 RETURN DISTINCT
   callee.qualified_name AS callee_qn,
   callee.name AS callee_name,
+  callee.local_name AS callee_local,
+  callee.file_path AS file_path,
   labels(callee) AS callee_type,
-  m.path AS file_path,
   callee.start_line AS start_line,
   callee.end_line AS end_line,
   coalesce(r.confidence, 1.0) AS confidence
@@ -91,17 +117,41 @@ ORDER BY callee_qn
 LIMIT $limit
 `;
 
+const CYPHER_FIND_CALLEES_TRANSITIVE = `
+MATCH (source)-[:CALLS*1..$maxDepth]->(callee)
+WHERE source.qualified_name = $qualified_name
+  OR source.name = $name
+  OR source.local_name = $name
+  OR source.qualified_name ENDS WITH (':' + $name)
+  OR source.qualified_name ENDS WITH ('.' + $name)
+RETURN DISTINCT
+  callee.qualified_name AS callee_qn,
+  callee.name AS callee_name,
+  callee.local_name AS callee_local,
+  callee.file_path AS file_path,
+  labels(callee) AS callee_type,
+  callee.start_line AS start_line,
+  callee.end_line AS end_line,
+  1.0 AS confidence
+ORDER BY callee_qn
+LIMIT $limit
+`;
+
+// Find a node by qualified name OR by short/local name (Bug #1 fix)
+// Supports new format: 'src/lib/foo.ts:Foo.bar' OR bare 'Foo.bar' OR bare 'bar'
 const CYPHER_FIND_NODE_BY_NAME = `
 MATCH (n)
 WHERE n.qualified_name = $qualified_name
+  OR n.qualified_name ENDS WITH (':' + $name)
   OR n.qualified_name ENDS WITH ('.' + $name)
-  OR (n.name = $name AND (n:Function OR n:Method OR n:Class))
-OPTIONAL MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(n)
+  OR n.local_name = $name
+  OR (n.name = $name AND (n:Function OR n:Method OR n:Class OR n:Interface))
 RETURN
   n.qualified_name AS qualified_name,
   n.name AS name,
+  n.local_name AS local_name,
+  n.file_path AS file_path,
   labels(n) AS type,
-  m.path AS file_path,
   n.start_line AS start_line,
   n.end_line AS end_line
 LIMIT 1
@@ -185,15 +235,22 @@ export class DependencyAnalyzer {
   }
 
   /**
-   * Find all functions/methods that call the target
+   * Find functions/methods that call the target.
+   * If depth > 1, uses transitive (variable-length) traversal.
    */
   async findCallers(
     qualifiedNameOrName: string,
-    limit?: number
+    limit?: number,
+    depth: number = 1
   ): Promise<DependencyNode[]> {
-    logger.info(`[dependency-analyzer] Finding callers of: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding callers of: ${qualifiedNameOrName} (depth=${depth})`);
 
-    const results = await this.graphService.fetchAll(withLimit(CYPHER_FIND_CALLERS, limit ?? this.limit), {
+    let query = CYPHER_FIND_CALLERS;
+    if (depth > 1) {
+      // Use transitive query — substitute $maxDepth before withLimit
+      query = CYPHER_FIND_CALLERS_TRANSITIVE.replace('$maxDepth', String(Math.floor(depth)));
+    }
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
       name: qualifiedNameOrName,
     });
@@ -202,15 +259,21 @@ export class DependencyAnalyzer {
   }
 
   /**
-   * Find all functions/methods called by the target
+   * Find functions/methods called by the target.
+   * If depth > 1, uses transitive (variable-length) traversal.
    */
   async findCallees(
     qualifiedNameOrName: string,
-    limit?: number
+    limit?: number,
+    depth: number = 1
   ): Promise<DependencyNode[]> {
-    logger.info(`[dependency-analyzer] Finding callees of: ${qualifiedNameOrName}`);
+    logger.info(`[dependency-analyzer] Finding callees of: ${qualifiedNameOrName} (depth=${depth})`);
 
-    const results = await this.graphService.fetchAll(withLimit(CYPHER_FIND_CALLEES, limit ?? this.limit), {
+    let query = CYPHER_FIND_CALLEES;
+    if (depth > 1) {
+      query = CYPHER_FIND_CALLEES_TRANSITIVE.replace('$maxDepth', String(Math.floor(depth)));
+    }
+    const results = await this.graphService.fetchAll(withLimit(query, limit ?? this.limit), {
       qualified_name: qualifiedNameOrName,
       name: qualifiedNameOrName,
     });
@@ -219,12 +282,17 @@ export class DependencyAnalyzer {
   }
 
   /**
-   * Get full dependency information for a node
+   * Get full dependency information for a node.
+   * @param qualifiedNameOrName Full qualified name OR bare class/function name (Bug #1 fix)
+   * @param depth Traversal depth for callers/callees (default 1, supports transitive traces)
    */
-  async analyzeDependencies(qualifiedNameOrName: string): Promise<DependencyResult | null> {
-    logger.info(`[dependency-analyzer] Analyzing dependencies for: ${qualifiedNameOrName}`);
+  async analyzeDependencies(
+    qualifiedNameOrName: string,
+    depth: number = 1
+  ): Promise<DependencyResult | null> {
+    logger.info(`[dependency-analyzer] Analyzing dependencies for: ${qualifiedNameOrName} (depth=${depth})`);
 
-    // Find the target node
+    // Find the target node — supports bare names via CYPHER_FIND_NODE_BY_NAME
     const targetResults = await this.graphService.fetchAll(CYPHER_FIND_NODE_BY_NAME, {
       qualified_name: qualifiedNameOrName,
       name: qualifiedNameOrName,
@@ -245,10 +313,11 @@ export class DependencyAnalyzer {
       end_line: targetRow.end_line as number | undefined,
     };
 
-    // Find callers and callees
+    // Find callers and callees — use the resolved full QN to avoid bare-name re-search
+    // Pass depth through so transitive traversal works (Bug #2 fix)
     const [callers, callees] = await Promise.all([
-      this.findCallers(target.qualified_name),
-      this.findCallees(target.qualified_name),
+      this.findCallers(target.qualified_name, undefined, depth),
+      this.findCallees(target.qualified_name, undefined, depth),
     ]);
 
     return { target, callers, callees };
