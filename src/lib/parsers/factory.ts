@@ -57,7 +57,37 @@ export class FunctionRegistryTrieImpl implements FunctionRegistryTrie {
       set.add(qualifiedName);
     }
 
-    // Build suffix trie entries (for finding methods by name)
+    // Build suffix trie entries (for finding methods by name).
+    // The new QN format uses ':' between path and local name (e.g., 'src/foo.ts:Foo.bar'),
+    // so we split on BOTH ':' and '.' to expose the local part as a searchable suffix.
+    // For 'src/foo.ts:Foo.bar' we want suffixes:
+    //   'src/foo.ts:Foo.bar' (full QN)
+    //   'Foo.bar' (after the ':')
+    //   'bar' (after the last '.')
+    const colonIdx = qualifiedName.lastIndexOf(':');
+    if (colonIdx !== -1) {
+      const localName = qualifiedName.slice(colonIdx + 1);
+      // Add the local name itself as a suffix
+      let set = this.suffixTrie.get(localName);
+      if (!set) {
+        set = new Set();
+        this.suffixTrie.set(localName, set);
+      }
+      set.add(qualifiedName);
+      // Also add each dot-separated part of the local name (e.g., 'bar' from 'Foo.bar')
+      const localParts = localName.split('.');
+      for (let i = 1; i < localParts.length; i++) {
+        const localSuffix = localParts.slice(i).join('.');
+        let lset = this.suffixTrie.get(localSuffix);
+        if (!lset) {
+          lset = new Set();
+          this.suffixTrie.set(localSuffix, lset);
+        }
+        lset.add(qualifiedName);
+      }
+    }
+
+    // Also build the original dot-only suffix trie entries (for legacy/full-QN lookups)
     for (let i = 0; i < parts.length; i++) {
       const suffix = parts.slice(i).join('.');
       let set = this.suffixTrie.get(suffix);
@@ -159,6 +189,9 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
   private readonly tsconfigAliases: TsconfigAliasMap;
   /** Project-wide class field type registry: className → (fieldName → typeName) */
   public readonly classFieldRegistry: ClassFieldRegistry = new Map();
+  /** Project-wide function return type registry: localName (fn or Class.method) → returnType
+   *  Used by the call processor's Tier 3 variable inference: `const x = fn()` → x: ReturnType */
+  public readonly returnTypeRegistry: Map<string, string> = new Map();
 
   // Cached processor instances
   private _importProcessor: ImportProcessor | null = null;
@@ -232,7 +265,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.simpleNameLookup,
         this.getImportProcessor(),
         this.moduleQnToFilePath,
-        this.classFieldRegistry
+        this.classFieldRegistry,
+        this.returnTypeRegistry,
       );
     }
     return this._definitionProcessor;
@@ -248,7 +282,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.getImportProcessor(),
         null, // Type inference - not implemented yet
         this.getDefinitionProcessor().classInheritance,
-        this.classFieldRegistry
+        this.classFieldRegistry,
+        this.returnTypeRegistry,
       );
     }
     return this._callProcessor;

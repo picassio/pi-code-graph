@@ -41,6 +41,8 @@ export class CallResolver {
   private readonly classInheritance: ClassInheritance;
   /** Project-wide class field registry for deep chain resolution */
   public classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null;
+  /** Project-wide function return type registry for Tier 3 variable inference */
+  public returnTypeRegistry: Map<string, string> | null = null;
   /** Current class name for this.field resolution */
   public currentClassName: string | null = null;
 
@@ -49,13 +51,15 @@ export class CallResolver {
     importProcessor: ImportProcessorProtocol,
     typeInference: TypeInferenceProtocol | null,
     classInheritance: ClassInheritance,
-    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null
+    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null,
+    returnTypeRegistry: Map<string, string> | null = null,
   ) {
     this.functionRegistry = functionRegistry;
     this.importProcessor = importProcessor;
     this.typeInference = typeInference;
     this.classInheritance = classInheritance;
     this.classFieldRegistry = classFieldRegistry;
+    this.returnTypeRegistry = returnTypeRegistry;
   }
 
   /**
@@ -377,6 +381,8 @@ export class CallProcessor implements CallProcessorProtocol {
   readonly projectName: string;
   readonly ingestor: IngestorProtocol;
   private readonly resolver: CallResolver;
+  /** Return type registry (shared with CallResolver) — used by extractLocalVarTypes */
+  private readonly returnTypeRegistry: Map<string, string> | null;
 
   constructor(
     ingestor: IngestorProtocol,
@@ -386,17 +392,20 @@ export class CallProcessor implements CallProcessorProtocol {
     importProcessor: ImportProcessorProtocol,
     typeInference: TypeInferenceProtocol | null,
     classInheritance: ClassInheritance,
-    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null
+    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null,
+    returnTypeRegistry: Map<string, string> | null = null,
   ) {
     this.ingestor = ingestor;
     this.repoPath = repoPath;
     this.projectName = projectName;
+    this.returnTypeRegistry = returnTypeRegistry;
     this.resolver = new CallResolver(
       functionRegistry,
       importProcessor,
       typeInference,
       classInheritance,
-      classFieldRegistry
+      classFieldRegistry,
+      returnTypeRegistry,
     );
   }
 
@@ -812,6 +821,8 @@ export class CallProcessor implements CallProcessorProtocol {
     // Tier 2: static factory call — const x = ClassName.create(...)
     if (target.type === 'call_expression') {
       const callee = target.childForFieldName('function');
+
+      // Tier 2a: member expression — ClassName.create() or obj.method()
       if (callee && callee.type === 'member_expression') {
         const obj = callee.childForFieldName('object');
         const prop = callee.childForFieldName('property');
@@ -819,7 +830,6 @@ export class CallProcessor implements CallProcessorProtocol {
           const className = obj.text;
           const methodName = prop.text;
           // Heuristic: factory methods like create, of, from, fromX, build, getInstance
-          // — likely return an instance of the class
           if (
             className &&
             /^[A-Z]/.test(className) &&
@@ -827,6 +837,41 @@ export class CallProcessor implements CallProcessorProtocol {
             /^(create|of|from|build|getInstance|inMemory|new)/.test(methodName)
           ) {
             types.set(varName, className);
+            return;
+          }
+          // Tier 3a: Class.method() — lookup return type in registry
+          if (className && methodName && this.returnTypeRegistry) {
+            const methodKey = `${className}.${methodName}`;
+            const retType = this.returnTypeRegistry.get(methodKey);
+            if (retType) {
+              types.set(varName, retType);
+              return;
+            }
+          }
+          // Tier 3b: obj.method() — check if obj is already typed; lookup obj's class method return type
+          if (obj.type === 'identifier' && prop) {
+            const objName = obj.text;
+            const methodName2 = prop.text;
+            const objType = types.get(objName);
+            if (objType && this.returnTypeRegistry) {
+              const methodKey = `${objType}.${methodName2}`;
+              const retType = this.returnTypeRegistry.get(methodKey);
+              if (retType) {
+                types.set(varName, retType);
+                return;
+              }
+            }
+          }
+        }
+      }
+
+      // Tier 3c: bare function call — const user = getUser()
+      if (callee && callee.type === 'identifier' && this.returnTypeRegistry) {
+        const fnName = callee.text;
+        if (fnName) {
+          const retType = this.returnTypeRegistry.get(fnName);
+          if (retType) {
+            types.set(varName, retType);
             return;
           }
         }

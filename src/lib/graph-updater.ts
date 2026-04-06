@@ -342,9 +342,10 @@ export class FunctionRegistryTrie {
     if (qnSet) {
       return Array.from(qnSet).sort();
     }
-    // Fallback to linear scan
+    // Fallback to linear scan — supports both new format (path:Class.method)
+    // and old format (project.module.Class.method)
     return Array.from(this.entriesMap.keys())
-      .filter((qn) => qn.endsWith(`.${suffix}`))
+      .filter((qn) => qn.endsWith(`:${suffix}`) || qn.endsWith(`.${suffix}`))
       .sort();
   }
 
@@ -685,6 +686,14 @@ export class GraphUpdater {
       const corrected = await definitionProcessor.resolveDeferredCppMethods();
       if (corrected > 0) {
         logger.info(`[graph-updater] Resolved ${corrected} deferred C++ out-of-class methods`);
+      }
+    }
+
+    // Resolve deferred interface implementations from object literal const declarations
+    if ((definitionProcessor as { resolveDeferredInterfaceImpls?: () => number | Promise<number> }).resolveDeferredInterfaceImpls) {
+      const ifaceImpls = await (definitionProcessor as { resolveDeferredInterfaceImpls: () => number | Promise<number> }).resolveDeferredInterfaceImpls();
+      if (ifaceImpls > 0) {
+        logger.info(`[graph-updater] Resolved ${ifaceImpls} deferred interface implementations`);
       }
     }
 

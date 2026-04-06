@@ -120,6 +120,33 @@ describe('FunctionRegistryTrieImpl', () => {
       const results = registry.findEndingWith('nonexistent');
       expect(results).toHaveLength(0);
     });
+
+    describe('File-path QN format (with `:` separator)', () => {
+      beforeEach(() => {
+        registry.set('src/lib/auth.ts:AuthStorage.login', NodeType.METHOD);
+        registry.set('src/lib/auth.ts:AuthStorage.logout', NodeType.METHOD);
+        registry.set('src/lib/other.ts:OtherClass.login', NodeType.METHOD);
+        registry.set('src/types.ts:UserInterface', NodeType.INTERFACE);
+      });
+
+      it('should find method by bare name across file-path QNs', () => {
+        const results = registry.findEndingWith('login');
+        expect(results).toContain('src/lib/auth.ts:AuthStorage.login');
+        expect(results).toContain('src/lib/other.ts:OtherClass.login');
+        // Also includes the old dotted entry from the outer beforeEach
+        expect(results.length).toBeGreaterThanOrEqual(2);
+      });
+
+      it('should find by Class.method suffix across file-path QNs', () => {
+        const results = registry.findEndingWith('AuthStorage.login');
+        expect(results).toContain('src/lib/auth.ts:AuthStorage.login');
+      });
+
+      it('should find interface by its bare name (no dots in local)', () => {
+        const results = registry.findEndingWith('UserInterface');
+        expect(results).toContain('src/types.ts:UserInterface');
+      });
+    });
   });
   
   describe('Edge Cases', () => {
