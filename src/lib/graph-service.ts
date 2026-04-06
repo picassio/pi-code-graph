@@ -360,7 +360,7 @@ export class MemgraphService {
   ): Promise<void> {
     if (paramsList.length === 0) return;
 
-    const maxRetries = 3;
+    const maxRetries = 10;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const session = this.getSession('WRITE');
       try {
@@ -369,9 +369,13 @@ export class MemgraphService {
       } catch (err) {
         const errStr = String(err).toLowerCase();
         if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
-          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries})...`);
+          // Exponential backoff with jitter: 50ms, 100ms, 200ms, 400ms, ..., up to ~10s
+          const baseMs = Math.min(50 * Math.pow(2, attempt), 5000);
+          const jitter = Math.random() * baseMs * 0.5;
+          const delayMs = baseMs + jitter;
+          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries}) after ${Math.round(delayMs)}ms...`);
           await session.close();
-          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          await new Promise(r => setTimeout(r, delayMs));
           continue;
         }
         if (!errStr.includes(ERR_SUBSTR_ALREADY_EXISTS)) {
@@ -399,7 +403,7 @@ export class MemgraphService {
   ): Promise<ResultRow[]> {
     if (paramsList.length === 0) return [];
 
-    const maxRetries = 3;
+    const maxRetries = 10;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const session = this.getSession('WRITE');
       try {
@@ -408,9 +412,12 @@ export class MemgraphService {
       } catch (err) {
         const errStr = String(err).toLowerCase();
         if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
-          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries})...`);
+          const baseMs = Math.min(50 * Math.pow(2, attempt), 5000);
+          const jitter = Math.random() * baseMs * 0.5;
+          const delayMs = baseMs + jitter;
+          this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries}) after ${Math.round(delayMs)}ms...`);
           await session.close();
-          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          await new Promise(r => setTimeout(r, delayMs));
           continue;
         }
         this.logger.error('Batch error:', err);

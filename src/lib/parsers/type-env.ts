@@ -275,7 +275,10 @@ export function extractClassFields(classNode: TreeSitterNode): ClassFieldTypes {
     // Constructor with property parameters: constructor(private readonly foo: Foo) { ... }
     if (child.type === 'method_definition') {
       const methodName = child.childForFieldName('name');
-      if (methodName && methodName.text === 'constructor') {
+      const methodNameText = methodName?.text;
+
+      // Constructor property params
+      if (methodNameText === 'constructor') {
         const params = child.childForFieldName('parameters');
         if (params) {
           for (let k = 0; k < params.childCount; k++) {
@@ -301,6 +304,30 @@ export function extractClassFields(classNode: TreeSitterNode): ClassFieldTypes {
                   }
                 }
               }
+            }
+          }
+        }
+      }
+
+      // Getters with return type: get foo(): Foo { ... }
+      // Check for 'get' keyword by looking at children
+      if (methodNameText) {
+        let isGetter = false;
+        for (let g = 0; g < child.childCount; g++) {
+          const gc = child.child(g);
+          if (gc && gc.type === 'get') {
+            isGetter = true;
+            break;
+          }
+        }
+        if (isGetter) {
+          // Return type annotation
+          const returnTypeNode = child.childForFieldName('return_type');
+          if (returnTypeNode) {
+            const inner = returnTypeNode.namedChild(0) ?? returnTypeNode;
+            const returnType = extractSimpleTypeName(inner);
+            if (returnType) {
+              fields.set(methodNameText, returnType);
             }
           }
         }
