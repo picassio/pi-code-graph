@@ -19,6 +19,7 @@ import { StructureProcessor } from './structure-processor.js';
 import { DefinitionProcessor } from './definition-processor.js';
 import { CallProcessor } from './call-processor.js';
 import { buildWorkspaceMap, type WorkspaceMap } from './workspace-resolver.js';
+import type { ClassFieldRegistry } from './type-env.js';
 import { loadTsconfigAliases, type TsconfigAliasMap } from './tsconfig-resolver.js';
 
 // =============================================================================
@@ -156,6 +157,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
   private readonly excludePaths: Set<string> | null;
   private readonly workspaceMap: WorkspaceMap;
   private readonly tsconfigAliases: TsconfigAliasMap;
+  /** Project-wide class field type registry: className → (fieldName → typeName) */
+  public readonly classFieldRegistry: ClassFieldRegistry = new Map();
 
   // Cached processor instances
   private _importProcessor: ImportProcessor | null = null;
@@ -228,7 +231,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.functionRegistry,
         this.simpleNameLookup,
         this.getImportProcessor(),
-        this.moduleQnToFilePath
+        this.moduleQnToFilePath,
+        this.classFieldRegistry
       );
     }
     return this._definitionProcessor;
@@ -243,7 +247,8 @@ export class ProcessorFactory implements ProcessorFactoryProtocol {
         this.functionRegistry,
         this.getImportProcessor(),
         null, // Type inference - not implemented yet
-        this.getDefinitionProcessor().classInheritance
+        this.getDefinitionProcessor().classInheritance,
+        this.classFieldRegistry
       );
     }
     return this._callProcessor;

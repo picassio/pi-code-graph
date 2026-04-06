@@ -29,6 +29,7 @@ import * as cs from '../constants.js';
 import { readFile, stat } from 'node:fs/promises';
 import { relative, dirname, basename, extname, resolve } from 'node:path';
 import { parse } from '../tree-sitter/index.js';
+import { extractClassFields, type ClassFieldRegistry } from './type-env.js';
 
 // =============================================================================
 // Definition Processor Implementation
@@ -43,6 +44,8 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   readonly importProcessor: ImportProcessorProtocol;
   readonly moduleQnToFilePath: Map<string, string>;
   readonly classInheritance: ClassInheritance = {};
+  /** Project-wide class field registry (shared with CallProcessor) */
+  readonly classFieldRegistry: ClassFieldRegistry;
 
   constructor(
     ingestor: IngestorProtocol,
@@ -51,7 +54,8 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     functionRegistry: FunctionRegistryTrie,
     simpleNameLookup: SimpleNameLookup,
     importProcessor: ImportProcessorProtocol,
-    moduleQnToFilePath: Map<string, string>
+    moduleQnToFilePath: Map<string, string>,
+    classFieldRegistry?: ClassFieldRegistry
   ) {
     this.ingestor = ingestor;
     this.repoPath = repoPath;
@@ -60,6 +64,7 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
     this.simpleNameLookup = simpleNameLookup;
     this.importProcessor = importProcessor;
     this.moduleQnToFilePath = moduleQnToFilePath;
+    this.classFieldRegistry = classFieldRegistry ?? new Map();
   }
 
   // ===========================================================================
@@ -281,6 +286,16 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
       }
 
       logger.debug(`Found class: ${classQn}`);
+
+      // Extract class field types for type inference (TS/JS only for now)
+      if (language === SupportedLanguage.TS || language === SupportedLanguage.JS) {
+        const fields = extractClassFields(classNode);
+        if (fields.size > 0) {
+          // Store by short class name (for lookup during call resolution)
+          this.classFieldRegistry.set(className, fields);
+          logger.debug(`Extracted ${fields.size} fields for ${className}`);
+        }
+      }
 
       // Process methods inside the class
       logger.info(`Processing methods for class: ${classQn} (label=${nodeLabel})`);

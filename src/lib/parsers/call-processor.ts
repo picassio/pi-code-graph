@@ -38,17 +38,71 @@ export class CallResolver {
   private readonly importProcessor: ImportProcessorProtocol;
   private readonly typeInference: TypeInferenceProtocol | null;
   private readonly classInheritance: ClassInheritance;
+  /** Project-wide class field registry for deep chain resolution */
+  public classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null;
+  /** Current class name for this.field resolution */
+  public currentClassName: string | null = null;
 
   constructor(
     functionRegistry: FunctionRegistryTrie,
     importProcessor: ImportProcessorProtocol,
     typeInference: TypeInferenceProtocol | null,
-    classInheritance: ClassInheritance
+    classInheritance: ClassInheritance,
+    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null
   ) {
     this.functionRegistry = functionRegistry;
     this.importProcessor = importProcessor;
     this.typeInference = typeInference;
     this.classInheritance = classInheritance;
+    this.classFieldRegistry = classFieldRegistry;
+  }
+
+  /**
+   * Resolve a deep chain like ['this', 'a', 'b', 'c', 'method']
+   * via the class field registry. Returns the final method's qualified name
+   * if every step in the chain resolves to a known type.
+   */
+  private resolveDeepChain(
+    parts: string[],
+    classContext: string | null
+  ): [NodeLabel, string, number] | null {
+    if (!this.classFieldRegistry || parts.length < 3) return null;
+
+    // Must start with 'this', 'self', or a class name in context
+    let currentType: string | undefined;
+    if (parts[0] === 'this' || parts[0] === 'self') {
+      currentType = classContext ? classContext.split(cs.SEPARATOR_DOT).pop() : undefined;
+    } else {
+      // Could be a variable — we don't have local type env here (would need per-file)
+      // For now, only handle this.*
+      return null;
+    }
+    if (!currentType) return null;
+
+    // Walk chain through field types: this.a.b.c.method
+    // parts = ['this', 'a', 'b', 'c', 'method']
+    // Walk parts[1..-2], each resolving field → next type
+    for (let i = 1; i < parts.length - 1; i++) {
+      const fieldName = parts[i];
+      const fields = this.classFieldRegistry.get(currentType);
+      if (!fields) return null;
+      const nextType = fields.get(fieldName);
+      if (!nextType) return null;
+      currentType = nextType;
+    }
+
+    // Final part is the method name
+    const methodName = parts[parts.length - 1];
+    // Find the method QN: look for anything ending in .{currentType}.{methodName}
+    const suffix = `.${currentType}.${methodName}`;
+    const candidates = this.functionRegistry.findEndingWith(methodName);
+    for (const qn of candidates) {
+      if (qn.endsWith(suffix)) {
+        const funcType = this.functionRegistry.get(qn);
+        return [this.nodeTypeToLabel(funcType!), qn, 0.9];
+      }
+    }
+    return null;
   }
 
   /**
@@ -66,6 +120,15 @@ export class CallResolver {
     if (parts.length === 1) {
       // Simple call: functionName()
       return this.resolveSimpleCall(callName, moduleQn, classContext);
+    }
+
+    // Deep chain resolution via class field registry
+    // Handles: this.a.b.c.method() — walks field types through the registry
+    if (parts.length >= 3 && (parts[0] === 'this' || parts[0] === 'self')) {
+      const deepResult = this.resolveDeepChain(parts, classContext);
+      if (deepResult) {
+        return deepResult;
+      }
     }
 
     // Method call: obj.method() or module.function()
@@ -290,7 +353,8 @@ export class CallProcessor implements CallProcessorProtocol {
     functionRegistry: FunctionRegistryTrie,
     importProcessor: ImportProcessorProtocol,
     typeInference: TypeInferenceProtocol | null,
-    classInheritance: ClassInheritance
+    classInheritance: ClassInheritance,
+    classFieldRegistry: import('./type-env.js').ClassFieldRegistry | null = null
   ) {
     this.ingestor = ingestor;
     this.repoPath = repoPath;
@@ -299,7 +363,8 @@ export class CallProcessor implements CallProcessorProtocol {
       functionRegistry,
       importProcessor,
       typeInference,
-      classInheritance
+      classInheritance,
+      classFieldRegistry
     );
   }
 
