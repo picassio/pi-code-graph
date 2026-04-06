@@ -194,7 +194,10 @@ export class CallResolver {
         const funcType = this.functionRegistry.get(candidates[0]);
         return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
       }
-      return [NodeLabel.FUNCTION, funcQn, 0.8];
+      // No registry match — don't emit speculative edge to a non-existent target.
+      // (Previously returned [FUNCTION, funcQn, 0.8] which created ±10k useless
+      // failed-to-create edges per pi-mono index, dominating flush time.)
+      return null;
     }
 
     // Check if it's a method on self/this
@@ -263,7 +266,8 @@ export class CallResolver {
         const funcType = this.functionRegistry.get(candidates[0]);
         return [this.nodeTypeToLabel(funcType!), candidates[0], 0.6];
       }
-      return [NodeLabel.FUNCTION, importedQn, 0.8];
+      // No registry match — don't emit speculative edge to a non-existent target.
+      return null;
     }
 
     // Check for wildcard imports
@@ -289,27 +293,11 @@ export class CallResolver {
   /**
    * Resolve a builtin function call
    */
-  resolveBuiltinCall(callName: string): [NodeLabel, string, number] | null {
-    // Check JavaScript builtins
-    if (cs.JS_BUILTIN_PATTERNS.has(callName)) {
-      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`, 0.3];
-    }
-
-    // Simple builtin names
-    const simpleBuiltins = new Set([
-      'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'set', 'tuple',
-      'range', 'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed',
-      'min', 'max', 'sum', 'abs', 'round', 'pow', 'isinstance', 'issubclass',
-      'hasattr', 'getattr', 'setattr', 'delattr', 'callable', 'type', 'id',
-      'repr', 'hash', 'open', 'input', 'eval', 'exec', 'compile',
-      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-      'fetch', 'Promise', 'async', 'await',
-    ]);
-
-    if (simpleBuiltins.has(callName)) {
-      return [NodeLabel.FUNCTION, `${cs.BUILTIN_PREFIX}${cs.SEPARATOR_DOT}${callName}`, 0.3];
-    }
-
+  resolveBuiltinCall(_callName: string): [NodeLabel, string, number] | null {
+    // Builtin call resolution disabled — it produced edges to QNs like
+    // `__builtin__.fetch` that never had corresponding nodes, causing
+    // ~10k failed-to-create edges per pi-mono index. If you need to track
+    // builtin usage, create stub Function nodes for builtins first.
     return null;
   }
 
