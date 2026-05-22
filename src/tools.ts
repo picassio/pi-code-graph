@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { basename } from "node:path";
 
 import { getServiceManager } from "./services.js";
@@ -19,10 +19,8 @@ import type { ResultItem, CodeSnippetResult, DependencyResult } from "./types.js
 // =============================================================================
 
 /**
- * Local string enum helper using this project's @sinclair/typebox version.
- * Avoid importing StringEnum from pi-ai: the new @earendil-works/pi-ai uses the
- * separate `typebox` v1 package, whose schema types are incompatible with
- * @sinclair/typebox v0.x used by pi-coding-agent tool definitions here.
+ * Local string enum helper using Pi's current `typebox` v1 schema types.
+ * Keep this local to avoid depending on Pi AI for one helper.
  */
 function StringEnum<T extends readonly string[]>(
 	values: T,
