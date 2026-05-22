@@ -1257,11 +1257,10 @@ export class GraphUpdater {
    * Flush the ingestor using the appropriate method
    */
   private async flushIngestor(): Promise<void> {
-    if (this.isFlushableIngestor(this.ingestor)) {
-      await this.ingestor.flushAll();
-    } else {
-      await this.ingestor.flush();
-    }
+    // Use the protocol-level flush() entrypoint so MemgraphService can serialize
+    // overlapping flush requests internally. Calling flushAll() directly bypasses
+    // that guard and can trigger Memgraph transaction conflicts.
+    await this.ingestor.flush();
   }
 }
 

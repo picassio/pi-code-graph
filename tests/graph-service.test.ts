@@ -28,7 +28,58 @@ import {
   createMemgraphServiceFromEnv,
   MemgraphConfig,
   MemgraphServiceOptions,
+  dedupeNodeBatchRows,
+  dedupeRelBatchRows,
+  isRetryableMemgraphConflict,
 } from '../src/lib/graph-service.js';
+
+describe('MemgraphService helpers', () => {
+  describe('isRetryableMemgraphConflict', () => {
+    it('detects Memgraph transient conflict by exact user-reported message', () => {
+      const err = Object.assign(
+        new Error('Cannot resolve conflicting transactions. Retry this transaction when the conflicting transaction is finished.'),
+        {
+          code: 'Memgraph.TransientError.MemgraphError.MemgraphError',
+          retriable: true,
+          retryable: true,
+        },
+      );
+      expect(isRetryableMemgraphConflict(err)).toBe(true);
+    });
+
+    it('detects older singular conflicting transaction messages', () => {
+      expect(isRetryableMemgraphConflict(new Error('conflicting transaction'))).toBe(true);
+    });
+
+    it('does not treat arbitrary errors as retryable conflicts', () => {
+      expect(isRetryableMemgraphConflict(new Error('syntax error near RETURN'))).toBe(false);
+    });
+  });
+
+  describe('batch dedupe helpers', () => {
+    it('deduplicates node rows by id and keeps the last props', () => {
+      expect(dedupeNodeBatchRows([
+        { id: 'a', props: { name: 'old' } },
+        { id: 'b', props: { name: 'bee' } },
+        { id: 'a', props: { name: 'new' } },
+      ])).toEqual([
+        { id: 'a', props: { name: 'new' } },
+        { id: 'b', props: { name: 'bee' } },
+      ]);
+    });
+
+    it('deduplicates relationship rows by source/target pair and keeps the last props', () => {
+      expect(dedupeRelBatchRows([
+        { from_val: 'a', to_val: 'b', props: { confidence: 0.5 } },
+        { from_val: 'a', to_val: 'c', props: { confidence: 1 } },
+        { from_val: 'a', to_val: 'b', props: { confidence: 0.9 } },
+      ])).toEqual([
+        { from_val: 'a', to_val: 'b', props: { confidence: 0.9 } },
+        { from_val: 'a', to_val: 'c', props: { confidence: 1 } },
+      ]);
+    });
+  });
+});
 
 describe('MemgraphService', () => {
   let service: MemgraphService;

@@ -158,6 +158,58 @@ function recordToRow(record: Neo4jRecord): ResultRow {
 }
 
 /**
+ * Detect transient Memgraph write conflicts. Memgraph marks these as retryable,
+ * but the exact message varies by version ("conflicting transaction" vs
+ * "Cannot resolve conflicting transactions").
+ */
+export function isRetryableMemgraphConflict(err: unknown): boolean {
+  const e = err as { code?: string; retriable?: boolean; retryable?: boolean; isRetryable?: () => boolean; isRetriable?: () => boolean };
+  const errStr = String(err).toLowerCase();
+  return Boolean(
+    e?.retriable ||
+    e?.retryable ||
+    e?.isRetryable?.() ||
+    e?.isRetriable?.() ||
+    e?.code?.includes('TransientError') ||
+    errStr.includes('conflicting transaction') ||
+    errStr.includes('conflicting transactions') ||
+    errStr.includes('cannot resolve conflicting transactions') ||
+    errStr.includes('deadlock') ||
+    errStr.includes('lock conflict')
+  );
+}
+
+/**
+ * Deduplicate node rows in a single UNWIND/MERGE batch.
+ *
+ * Memgraph can throw write-conflict errors when the same unique node key appears
+ * multiple times in one batch. Keep the last props for a duplicated id.
+ */
+export function dedupeNodeBatchRows(rows: NodeBatchRow[]): NodeBatchRow[] {
+  const byId = new Map<string, NodeBatchRow>();
+  for (const row of rows) {
+    byId.set(`${typeof row.id}:${String(row.id)}`, row);
+  }
+  return Array.from(byId.values());
+}
+
+/**
+ * Deduplicate relationship rows in a single pattern group. MERGE creates at most
+ * one relationship of the same type between a source/target pair, so duplicate
+ * rows only add conflict risk and query cost. Keep the last props.
+ */
+export function dedupeRelBatchRows(rows: RelBatchRow[]): RelBatchRow[] {
+  const byPair = new Map<string, RelBatchRow>();
+  for (const row of rows) {
+    byPair.set(
+      `${typeof row.from_val}:${String(row.from_val)}\u0000${typeof row.to_val}:${String(row.to_val)}`,
+      row
+    );
+  }
+  return Array.from(byPair.values());
+}
+
+/**
  * Convert QueryResult to array of ResultRow
  */
 function resultToRows(result: QueryResult): ResultRow[] {
@@ -252,7 +304,7 @@ export class MemgraphService {
   async close(): Promise<void> {
     if (this.driver) {
       // Flush any remaining data
-      await this.flushAll();
+      await this.enqueueFlush();
       await this.driver.close();
       this.driver = null;
       this.logger.info('Disconnected from Memgraph');
@@ -360,7 +412,7 @@ export class MemgraphService {
   ): Promise<void> {
     if (paramsList.length === 0) return;
 
-    const maxRetries = 10;
+    const maxRetries = 20;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const session = this.getSession('WRITE');
       try {
@@ -368,9 +420,9 @@ export class MemgraphService {
         return;
       } catch (err) {
         const errStr = String(err).toLowerCase();
-        if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
-          // Exponential backoff with jitter: 50ms, 100ms, 200ms, 400ms, ..., up to ~10s
-          const baseMs = Math.min(50 * Math.pow(2, attempt), 5000);
+        if (isRetryableMemgraphConflict(err) && attempt < maxRetries - 1) {
+          // Exponential backoff with jitter: 100ms, 200ms, 400ms, ..., capped at ~10s
+          const baseMs = Math.min(100 * Math.pow(2, attempt), 10000);
           const jitter = Math.random() * baseMs * 0.5;
           const delayMs = baseMs + jitter;
           this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries}) after ${Math.round(delayMs)}ms...`);
@@ -403,16 +455,15 @@ export class MemgraphService {
   ): Promise<ResultRow[]> {
     if (paramsList.length === 0) return [];
 
-    const maxRetries = 10;
+    const maxRetries = 20;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const session = this.getSession('WRITE');
       try {
         const result = await session.run(wrapWithUnwind(query), { batch: paramsList });
         return resultToRows(result);
       } catch (err) {
-        const errStr = String(err).toLowerCase();
-        if (errStr.includes('conflicting transaction') && attempt < maxRetries - 1) {
-          const baseMs = Math.min(50 * Math.pow(2, attempt), 5000);
+        if (isRetryableMemgraphConflict(err) && attempt < maxRetries - 1) {
+          const baseMs = Math.min(100 * Math.pow(2, attempt), 10000);
           const jitter = Math.random() * baseMs * 0.5;
           const delayMs = baseMs + jitter;
           this.logger.warn(`Transaction conflict, retrying (${attempt + 1}/${maxRetries}) after ${Math.round(delayMs)}ms...`);
@@ -803,7 +854,10 @@ export class MemgraphService {
           const query = this.options.useMerge
             ? buildMergeNodeQuery(label, idKey)
             : buildCreateNodeQuery(label, idKey);
-          await this.executeBatch(query, batchRows);
+          const rowsToFlush = this.options.useMerge
+            ? dedupeNodeBatchRows(batchRows)
+            : batchRows;
+          await this.executeBatch(query, rowsToFlush);
         }
 
         flushedTotal += batchRows.length;
@@ -853,7 +907,10 @@ export class MemgraphService {
           ? buildMergeRelationshipQuery(fromLabel, fromKey, relType, toLabel, toKey, hasProps)
           : buildCreateRelationshipQuery(fromLabel, fromKey, relType, toLabel, toKey, hasProps);
 
-        const results = await this.executeBatchWithReturn(query, paramsList);
+        const rowsToFlush = this.options.useMerge
+          ? dedupeRelBatchRows(paramsList)
+          : paramsList;
+        const results = await this.executeBatchWithReturn(query, rowsToFlush);
 
         let batchSuccessful = 0;
         for (const r of results) {
@@ -865,11 +922,11 @@ export class MemgraphService {
 
         // Log warnings for CALLS relationships that failed
         if (relType === REL_TYPE_CALLS_CONST) {
-          const failed = paramsList.length - batchSuccessful;
+          const failed = rowsToFlush.length - batchSuccessful;
           if (failed > 0) {
             this.logger.warn(`CALLS relationships failed: ${failed}`);
-            for (let i = 0; i < Math.min(3, paramsList.length); i++) {
-              const sample = paramsList[i];
+            for (let i = 0; i < Math.min(3, rowsToFlush.length); i++) {
+              const sample = rowsToFlush[i];
               this.logger.warn(
                 `  Sample ${i + 1}: ${fromLabel}(${sample[KEY_FROM_VAL]}) -> ${toLabel}(${sample[KEY_TO_VAL]})`
               );
@@ -877,7 +934,7 @@ export class MemgraphService {
           }
         }
 
-        totalAttempted += paramsList.length;
+        totalAttempted += rowsToFlush.length;
         totalSuccessful += batchSuccessful;
       } catch (err) {
         this.logger.error(`Error flushing relationships for pattern ${patternKey}:`, err);
@@ -908,16 +965,18 @@ export class MemgraphService {
       // Wait for the current flush to finish, then flush again
       await this.flushPromise;
     }
-    this.flushPromise = this.flushAll().finally(() => {
+    this.flushPromise = this.doFlushAll().finally(() => {
       this.flushPromise = null;
     });
     await this.flushPromise;
   }
 
   /**
-   * Flush all buffered data to the database
+   * Flush all buffered data to the database without queueing.
+   * Callers should use flush()/flushAll(); this method exists so the queue
+   * wrapper does not recursively call itself.
    */
-  async flushAll(): Promise<void> {
+  private async doFlushAll(): Promise<void> {
     this.logger.info('Flushing all buffered data...');
     await this.flushNodes();
     await this.flushRelationships();
@@ -925,10 +984,18 @@ export class MemgraphService {
   }
 
   /**
+   * Flush all buffered data to the database.
+   * Kept for backwards compatibility, but now serialized through enqueueFlush().
+   */
+  async flushAll(): Promise<void> {
+    return this.enqueueFlush();
+  }
+
+  /**
    * Flush pending operations (alias for flushAll to implement IngestorProtocol)
    */
   async flush(): Promise<void> {
-    return this.flushAll();
+    return this.enqueueFlush();
   }
 
   // ===========================================================================
