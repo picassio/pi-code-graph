@@ -1,6 +1,6 @@
 # pi-code-graph
 
-A native TypeScript extension for [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) that builds and queries **code knowledge graphs** — enabling AI agents to understand codebase structure, relationships, and dependencies before making changes.
+A native TypeScript extension for [pi-coding-agent](https://github.com/earendil-works/pi) that builds and queries **code knowledge graphs** — enabling AI agents to understand codebase structure, relationships, and dependencies before making changes.
 
 Ported from [code-graph-rag](https://github.com/picassio/code-graph-rag) (Python) to pure TypeScript. No Python dependency required.
 
@@ -329,5 +329,5 @@ MIT
 
 - [code-graph-rag](https://github.com/vitali87/code-graph-rag) by [@vitali87](https://github.com/vitali87) — original code-graph-rag concept and implementation
 - [code-graph-rag](https://github.com/picassio/code-graph-rag) by [@picassio](https://github.com/picassio) — enhanced Python implementation (forked from vitali87)
-- [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) — the coding agent platform
+- [pi-coding-agent](https://github.com/earendil-works/pi) — the coding agent platform
 - [zvec](https://github.com/alibaba/zvec) — vector database engine

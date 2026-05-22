@@ -19,7 +19,7 @@ import { SEPARATOR_DOT } from '../constants.js';
 // =============================================================================
 
 export interface WorkspacePackage {
-  /** npm package name (e.g., "@mariozechner/pi-ai") */
+  /** npm package name (e.g., "@earendil-works/pi-ai") */
   name: string;
   /** Relative path from repo root (e.g., "packages/ai") */
   relativePath: string;

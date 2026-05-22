@@ -5,7 +5,7 @@
  * Supports both API key and OAuth authentication methods.
  */
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /**
  * Provider mapping from pi providers to CGR providers
