@@ -81,6 +81,11 @@ export interface FlushableIngestor extends IngestorProtocol {
   flushAll(): Promise<void>;
 }
 
+interface PendingHashCacheUpdate {
+  cachePath: string;
+  hashes: FileHashCache;
+}
+
 /** Extended definition processor with optional C++ and override methods */
 interface ExtendedDefinitionProcessor {
   resolveDeferredCppMethods?(): Promise<number> | number;
@@ -678,7 +683,7 @@ export class GraphUpdater {
 
     // Pass 2: Process files
     logger.info('[graph-updater] Pass 2: Processing files...');
-    await this.processFiles(force);
+    const pendingHashCacheUpdate = await this.processFiles(force);
 
     // Resolve any deferred operations
     const definitionProcessor = this.factory.getDefinitionProcessor() as unknown as ExtendedDefinitionProcessor;
@@ -710,6 +715,11 @@ export class GraphUpdater {
 
     logger.info('[graph-updater] Analysis complete');
     await this.flushIngestor();
+
+    // Only mark file hashes as current after the graph flush succeeds. If a
+    // flush crashes, leaving the old cache in place forces the next run to
+    // reprocess changed files instead of incorrectly skipping a partial index.
+    await saveHashCache(pendingHashCacheUpdate.cachePath, pendingHashCacheUpdate.hashes);
 
     // Prune orphan nodes
     await this.pruneOrphanNodes();
@@ -906,7 +916,7 @@ export class GraphUpdater {
   /**
    * Process all files with incremental change detection
    */
-  private async processFiles(force: boolean): Promise<void> {
+  private async processFiles(force: boolean): Promise<PendingHashCacheUpdate> {
     const cachePath = join(HASH_CACHE_DIR, this.hashCacheFilename);
     const oldHashes = force ? {} : await loadHashCache(cachePath);
 
@@ -999,8 +1009,10 @@ export class GraphUpdater {
       logger.info(`[graph-updater] Processed ${changedCount} changed files`);
     }
 
-    // Save updated hash cache
-    await saveHashCache(cachePath, newHashes);
+    // Do not save the hash cache here. The caller saves it only after the final
+    // graph flush succeeds; otherwise a crash during Pass 3/final flush can leave
+    // a partial graph with a cache that incorrectly marks all files as current.
+    return { cachePath, hashes: newHashes };
   }
 
   /**
