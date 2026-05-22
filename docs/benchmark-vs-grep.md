@@ -133,3 +133,40 @@ Likely causes for code-graph misses:
 5. **Object literals typed by an interface are not modeled as implementations.** TEST 2: a `const x: SomeInterface = { ... }` does not show up as an implementer of `SomeInterface`. This is a major blind spot for idiomatic TypeScript that prefers object literals over classes.
 
 All five gaps are reproducible against the pi-mono index built immediately before the tests were run.
+
+---
+
+# v0.15.0 retest — after grep-vs-graph follow-up fixes
+
+Repo: `pi-mono`
+Index: clean full re-index after `v0.15.0`, embeddings disabled for structural benchmark
+Index time: ~53.5s for 852 eligible files
+Validation: `npx tsc --noEmit`; `npx vitest run` → 344 passing tests
+
+Important retest discoveries fixed before the final numbers below:
+- Clean full indexes on large repos were missing some `CALLS` edges because pass 3 depended on the bounded AST cache. `GraphUpdater` now tracks all processed code files and re-parses evicted ASTs for call extraction.
+- Upgraded Memgraph instances need constraints/indexes for new labels (`Comment`, `Literal`, `Builtin`). `GraphUpdater` now ensures constraints at run start.
+- Fire-and-forget auto-flush from synchronous batch methods could race with ongoing parsing. Batch methods now require caller-managed awaited flushes.
+
+## Retest summary
+
+| Test | grep / ripgrep | code-graph | Winner | Notes |
+|---|---:|---:|---|---|
+| Direct callers of `AuthStorage.login` | 3 line matches, ~17ms | 1 true caller, ~66ms | **code-graph for precision; grep for speed** | grep still returns 2 method-name collisions; graph returns enclosing caller `InteractiveMode.showLoginDialog`. |
+| `OAuthProviderInterface` object-literal implementations | 6 matches, ~16ms | 6 implementers, ~58ms | **tie** | Previous graph blind spot is fixed; graph now models `const x: Interface = {}` implementations. |
+| Transitive callers of `AuthStorage.getApiKey` depth ≤ 3 | 28 line matches, ~15ms | 19 graph callers, ~65ms | **mixed** | Graph now includes cross-package and transitive callers; grep still has more raw test-file line occurrences. Counts are not one-to-one because graph dedupes by enclosing function/module. |
+| TODO/FIXME/comment search | 192 text matches, ~17ms | 15 comment-node matches, ~42ms | **grep** | Graph now sees comments, but grep is still the correct exhaustive text-search tool and also searches docs/strings. |
+| `console.log` builtin calls | 754 text matches, ~18ms | 200 returned of many builtin nodes, ~35ms | **grep for exhaustive text; graph for structured builtin nodes** | Graph output is capped/truncated visibly instead of silently. |
+| `OPENROUTER_API_KEY` string literal | 30 text matches, ~16ms | 3 literal nodes, ~68ms | **grep** | Graph intentionally indexes code literals, not every docs/package-lock occurrence. |
+
+## Updated conclusion
+
+The fixes materially improve code-graph on structural questions:
+- object-literal interface implementations are now first-class graph facts;
+- large-repo full indexing no longer silently loses early-file call edges due AST-cache eviction;
+- current-project scoping and truncation metadata make query results safer/honester;
+- comments, literals, and builtins are visible in the graph after re-indexing.
+
+The honest comparison remains:
+- **Use grep/ripgrep** for exhaustive exact text search, comments, docs, package-lock hits, and fastest known-pattern scans.
+- **Use code-graph** for structural relationships, call/dependency analysis, enclosing function context, cross-file/cross-package graph traversal, and semantic/concept search.

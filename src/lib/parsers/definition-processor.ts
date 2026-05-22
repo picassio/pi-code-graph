@@ -143,6 +143,11 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
         await this.ingestInterfaceObjectLiterals(rootNode, moduleQn, relativePath, language);
       }
 
+      // Ingest text-pattern nodes that grep is good at: comments, string literals,
+      // and selected builtins. These make query_code_graph honest/useful for
+      // TODO/FIXME, literal search, and console.log-style questions.
+      this.ingestTextPatternNodes(rootNode, relativePath, language);
+
       return [rootNode, language];
     } catch (error) {
       logger.error(`Failed to parse ${filePath}:`, error);
@@ -429,6 +434,150 @@ export class DefinitionProcessor implements DefinitionProcessorProtocol {
   // ===========================================================================
   // Helper Methods
   // ===========================================================================
+
+  /**
+   * Ingest lightweight text-pattern nodes so the graph can answer grep-like
+   * questions for comments, string literals, and selected builtins.
+   */
+  private ingestTextPatternNodes(
+    rootNode: TreeSitterNode,
+    relativePath: string,
+    language: SupportedLanguage,
+  ): void {
+    const normalizedFilePath = normalizeFilePath(relativePath);
+
+    const walk = (node: TreeSitterNode): void => {
+      if (this.isCommentNode(node)) {
+        this.registerTextPatternNode(
+          cs.NodeLabel.COMMENT,
+          node,
+          normalizedFilePath,
+          'comment',
+          this.cleanCommentText(node.text),
+        );
+        return;
+      }
+
+      if (this.isLiteralNode(node, language)) {
+        this.registerTextPatternNode(
+          cs.NodeLabel.LITERAL,
+          node,
+          normalizedFilePath,
+          node.type,
+          this.cleanLiteralText(node.text),
+        );
+        return;
+      }
+
+      if (language === SupportedLanguage.TS || language === SupportedLanguage.JS) {
+        const builtinName = this.extractJsBuiltinCallName(node);
+        if (builtinName) {
+          this.registerBuiltinNode(node, normalizedFilePath, builtinName);
+        }
+      }
+
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child) walk(child);
+      }
+    };
+
+    walk(rootNode);
+  }
+
+  private isCommentNode(node: TreeSitterNode): boolean {
+    return node.type === 'comment' || node.type.endsWith('_comment');
+  }
+
+  private isLiteralNode(node: TreeSitterNode, language: SupportedLanguage): boolean {
+    if (language !== SupportedLanguage.TS && language !== SupportedLanguage.JS) {
+      return false;
+    }
+    return node.type === 'string' || node.type === 'string_fragment' || node.type === 'number';
+  }
+
+  private cleanCommentText(text: string): string {
+    return text
+      .replace(/^\/\/\s?/, '')
+      .replace(/^\/\*+\s?/, '')
+      .replace(/\s?\*+\/$/, '')
+      .trim();
+  }
+
+  private cleanLiteralText(text: string): string {
+    if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")) || (text.startsWith('`') && text.endsWith('`'))) {
+      return text.slice(1, -1);
+    }
+    return text;
+  }
+
+  private registerTextPatternNode(
+    label: cs.NodeLabel.COMMENT | cs.NodeLabel.LITERAL,
+    node: TreeSitterNode,
+    normalizedFilePath: string,
+    kind: string,
+    text: string,
+  ): void {
+    const startLine = node.startPosition.row + 1;
+    const endLine = node.endPosition.row + 1;
+    const qn = `${normalizedFilePath}${QN_PATH_SEP}${label.toLowerCase()}@${startLine}:${node.startPosition.column}`;
+    this.ingestor.ensureNodeBatch(label, {
+      [cs.KEY_QUALIFIED_NAME]: qn,
+      [cs.KEY_NAME]: text.slice(0, 80) || kind,
+      text,
+      kind,
+      [cs.KEY_START_LINE]: startLine,
+      [cs.KEY_END_LINE]: endLine,
+      [cs.KEY_PROJECT]: this.projectName,
+      [cs.KEY_FILE_PATH]: normalizedFilePath,
+      [cs.KEY_LOCAL_NAME]: `${label.toLowerCase()}@${startLine}`,
+    });
+  }
+
+  private extractJsBuiltinCallName(node: TreeSitterNode): string | null {
+    if (node.type !== 'call_expression') return null;
+
+    const candidates: string[] = [];
+    const callee = node.childForFieldName('function');
+    if (callee) {
+      candidates.push(callee.text);
+    }
+
+    // Some tree-sitter JS/TS call forms (notably nested/member calls in scripts)
+    // do not expose a stable `function` field through web-tree-sitter. Fall back
+    // to the call-expression prefix before `(` so builtin detection remains
+    // complete for grep-like questions such as "where do we call console.log?".
+    const openParenIndex = node.text.indexOf('(');
+    if (openParenIndex > 0) {
+      candidates.push(node.text.slice(0, openParenIndex).trim());
+    }
+
+    for (const candidate of candidates) {
+      if (cs.JS_BUILTIN_PATTERNS.has(candidate)) return candidate;
+      const optionalChainNormalized = candidate.replace(/\?\.$/, '');
+      if (cs.JS_BUILTIN_PATTERNS.has(optionalChainNormalized)) return optionalChainNormalized;
+    }
+
+    return null;
+  }
+
+  private registerBuiltinNode(
+    callNode: TreeSitterNode,
+    normalizedFilePath: string,
+    builtinName: string,
+  ): void {
+    const startLine = callNode.startPosition.row + 1;
+    const qn = `${normalizedFilePath}${QN_PATH_SEP}builtin.${builtinName}@${startLine}:${callNode.startPosition.column}`;
+    this.ingestor.ensureNodeBatch(cs.NodeLabel.BUILTIN, {
+      [cs.KEY_QUALIFIED_NAME]: qn,
+      [cs.KEY_NAME]: builtinName,
+      [cs.KEY_START_LINE]: startLine,
+      [cs.KEY_END_LINE]: callNode.endPosition.row + 1,
+      [cs.KEY_PROJECT]: this.projectName,
+      [cs.KEY_FILE_PATH]: normalizedFilePath,
+      [cs.KEY_LOCAL_NAME]: `builtin.${builtinName}@${startLine}`,
+    });
+  }
 
   /**
    * Called after all files are processed in pass 2. Resolves pending

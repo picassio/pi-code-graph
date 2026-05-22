@@ -167,9 +167,10 @@ export async function createAllTools(config: ToolsConfig): Promise<ToolCollectio
   const codeRetriever = createCodeRetriever(projectRoot, graphService);
 
   // Create codebase query tool
+  const scopedQueryConfig = { ...queryConfig, projectName };
   const codebaseQuery = cypherGenerator
-    ? createCodebaseQueryTool(graphService, cypherGenerator, queryConfig)
-    : createCodebaseQueryToolWithDefaults(graphService, undefined, queryConfig);
+    ? createCodebaseQueryTool(graphService, cypherGenerator, scopedQueryConfig)
+    : createCodebaseQueryToolWithDefaults(graphService, undefined, scopedQueryConfig);
 
   // Create semantic search tool (may be null if no SemanticSearchService)
   let semanticSearch: SemanticSearchTool | null = null;

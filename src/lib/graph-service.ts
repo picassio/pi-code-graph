@@ -758,13 +758,17 @@ export class MemgraphService {
   // ===========================================================================
 
   /**
-   * Add a node to the batch buffer (will be flushed when buffer is full)
+   * Add a node to the batch buffer.
+   *
+   * Do not trigger an async fire-and-forget flush from this synchronous method:
+   * a background flush can snapshot/clear `nodeBuffer` while parsers keep adding
+   * nodes, which loses nodes under large indexes. Callers must use flush(),
+   * flushAll(), or GraphUpdater's periodic awaited flushes to persist data.
    */
   ensureNodeBatch(label: string, properties: PropertyDict): void {
     this.nodeBuffer.push({ label, properties });
     if (this.nodeBuffer.length >= (this.options.batchSize || 1000)) {
-      this.logger.debug(`Node buffer full, flushing ${this.options.batchSize} nodes`);
-      void this.enqueueFlush();
+      this.logger.debug(`Node buffer reached ${this.nodeBuffer.length} nodes; awaiting caller-managed flush`);
     }
   }
 
@@ -797,8 +801,7 @@ export class MemgraphService {
     this.relCount++;
 
     if (this.relCount >= (this.options.batchSize || 1000)) {
-      this.logger.debug(`Relationship buffer full, flushing ${this.options.batchSize} relationships`);
-      void this.enqueueFlush();
+      this.logger.debug(`Relationship buffer reached ${this.relCount} relationships; awaiting caller-managed flush`);
     }
   }
 

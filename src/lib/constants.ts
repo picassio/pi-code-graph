@@ -42,6 +42,9 @@ export enum NodeLabel {
   MODULE_INTERFACE = 'ModuleInterface',
   MODULE_IMPLEMENTATION = 'ModuleImplementation',
   EXTERNAL_PACKAGE = 'ExternalPackage',
+  COMMENT = 'Comment',
+  LITERAL = 'Literal',
+  BUILTIN = 'Builtin',
 }
 
 export enum RelationshipType {
@@ -117,6 +120,9 @@ export const NODE_LABEL_UNIQUE_KEYS: Record<NodeLabel, UniqueKeyType> = {
   [NodeLabel.MODULE_INTERFACE]: UniqueKeyType.QUALIFIED_NAME,
   [NodeLabel.MODULE_IMPLEMENTATION]: UniqueKeyType.QUALIFIED_NAME,
   [NodeLabel.EXTERNAL_PACKAGE]: UniqueKeyType.NAME,
+  [NodeLabel.COMMENT]: UniqueKeyType.QUALIFIED_NAME,
+  [NodeLabel.LITERAL]: UniqueKeyType.QUALIFIED_NAME,
+  [NodeLabel.BUILTIN]: UniqueKeyType.QUALIFIED_NAME,
 };
 
 export const NODE_UNIQUE_CONSTRAINTS: Record<string, string> = Object.fromEntries(

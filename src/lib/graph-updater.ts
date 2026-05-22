@@ -17,7 +17,7 @@ import type { LanguageQueries, QualifiedName, SimpleNameLookup, NodeType, Result
 import type { IngestorProtocol, ASTCacheProtocol, StructuralElements } from './parsers/base.js';
 import { ProcessorFactory, FunctionRegistryTrieImpl } from './parsers/factory.js';
 import { shouldSkipPath } from './parsers/structure-processor.js';
-import { getLanguageSpecForExtension, loadAllQueries } from './tree-sitter/index.js';
+import { getLanguageSpecForExtension, loadAllQueries, parse } from './tree-sitter/index.js';
 import * as cs from './constants.js';
 import {
   CYPHER_DELETE_MODULE,
@@ -74,6 +74,7 @@ export interface GraphUpdaterConfig {
 export interface QueryProtocol extends IngestorProtocol {
   executeWrite(query: string, params: Record<string, unknown>): Promise<void>;
   fetchAll(query: string, params?: Record<string, unknown>): Promise<ResultRow[]>;
+  ensureConstraints?(): Promise<void>;
 }
 
 /** Protocol for ingestors that support flushAll (e.g., MemgraphService) */
@@ -596,6 +597,9 @@ export class GraphUpdater {
 
   // Track changed files for incremental embedding updates
   private changedFilePaths: Set<string> = new Set();
+  /** Code files processed in pass 2. Used by pass 3 so bounded AST cache eviction
+   * cannot silently skip call extraction in large repositories. */
+  private processedCodeFiles: Map<string, SupportedLanguage> = new Map();
   private isForceRun = false;
 
   constructor(
@@ -664,6 +668,7 @@ export class GraphUpdater {
   async run(force: boolean = false): Promise<void> {
     this.isForceRun = force;
     this.changedFilePaths.clear();
+    this.processedCodeFiles.clear();
 
     // Check if repo path is a single file
     const repoStat = await stat(this.repoPath);
@@ -671,6 +676,13 @@ export class GraphUpdater {
       this.singleFile = this.repoPath;
       // Update repoPath to parent directory
       (this as { repoPath: string }).repoPath = dirname(this.repoPath);
+    }
+
+    // Ensure schema exists, including labels added by newer versions. This keeps
+    // MERGE performance acceptable after upgrades (e.g. Comment/Literal/Builtin
+    // nodes added in v0.15) and avoids relying on a one-time setup command.
+    if (this.isQueryProtocol(this.ingestor) && this.ingestor.ensureConstraints) {
+      await this.ingestor.ensureConstraints();
     }
 
     // Ensure project node exists
@@ -792,6 +804,7 @@ export class GraphUpdater {
       this.astCache.delete(filePath);
       logger.debug('[graph-updater] Removed from AST cache');
     }
+    this.processedCodeFiles.delete(filePath);
 
     // New format: keys start with '<file_path>:' (e.g., 'src/lib/foo.ts:Foo.bar').
     const relativePath = relative(this.repoPath, filePath).replace(/\\/g, '/');
@@ -1038,6 +1051,7 @@ export class GraphUpdater {
 
       if (result) {
         const [rootNode, language] = result;
+        this.processedCodeFiles.set(filepath, language);
         this.astCache.set(filepath, [rootNode, language]);
 
         // Sync with our function registry
@@ -1062,10 +1076,31 @@ export class GraphUpdater {
    */
   private async processFunctionCalls(): Promise<void> {
     const callProcessor = this.factory.getCallProcessor();
-    const entries = Array.from(this.astCache.entries());
+    const entries = Array.from(this.processedCodeFiles.entries());
 
-    for (const [filePath, [rootNode, language]] of entries) {
-      callProcessor.processCallsInFile(filePath, rootNode, language, this.queries);
+    let reparsedCount = 0;
+    for (const [filePath, language] of entries) {
+      const cached = this.astCache.get(filePath);
+      if (cached) {
+        callProcessor.processCallsInFile(filePath, cached[0], cached[1], this.queries);
+        continue;
+      }
+
+      // BoundedASTCache may evict earlier files in large repositories before pass
+      // 3. Re-parse evicted files so CALLS extraction remains complete instead
+      // of depending on cache sizing.
+      try {
+        const sourceCode = await readFile(filePath, 'utf-8');
+        const tree = await parse(sourceCode, language);
+        callProcessor.processCallsInFile(filePath, tree.rootNode, language, this.queries);
+        reparsedCount++;
+      } catch (error) {
+        logger.warn(`[graph-updater] Failed to re-parse ${filePath} for call extraction:`, error);
+      }
+    }
+
+    if (reparsedCount > 0) {
+      logger.info(`[graph-updater] Re-parsed ${reparsedCount} evicted ASTs for call extraction`);
     }
   }
 

@@ -14,6 +14,8 @@ import { getSettings } from "./settings.js";
 import { formatResults, formatCodeSnippet, formatDependencies, formatProjectList } from "./formatters.js";
 import type { ResultItem, CodeSnippetResult, DependencyResult } from "./types.js";
 
+const LOW_SEMANTIC_SCORE_THRESHOLD = 0.35;
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -163,13 +165,19 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 
 				if (result.results && result.results.length > 0) {
 					const items = toResultItems(result.results);
+					const truncationNote = result.was_truncated
+						? `\n\n⚠️ Results truncated: showing ${result.returned_results ?? items.length} of ${result.total_results ?? "unknown"}. Narrow the query or ask for a higher-level summary.`
+						: "";
 					return {
-						content: [{ type: "text", text: formatResults(items, params.query) }],
+						content: [{ type: "text", text: formatResults(items, params.query) + truncationNote }],
 						details: { 
 							results: items, 
 							query: params.query, 
 							cypher_query: result.query_used,
 							row_count: result.results.length,
+							was_truncated: result.was_truncated,
+							total_results: result.total_results,
+							returned_results: result.returned_results,
 						},
 					};
 				}
@@ -348,9 +356,13 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 
 				if (searchResults && searchResults.length > 0) {
 					const items = toResultItems(searchResults);
+					const bestScore = Math.max(...items.map((item) => item.score ?? 0));
+					const lowScoreWarning = bestScore > 0 && bestScore < LOW_SEMANTIC_SCORE_THRESHOLD
+						? `\n\n⚠️ No strong semantic matches (best score ${(bestScore * 100).toFixed(1)}%). For exact comments, literals, or builtin calls, use query_code_graph/grep-style queries instead of semantic search.`
+						: "";
 					return {
-						content: [{ type: "text", text: formatResults(items, params.query) }],
-						details: { results: items, query: params.query, top_k: topK },
+						content: [{ type: "text", text: formatResults(items, params.query) + lowScoreWarning }],
+						details: { results: items, query: params.query, top_k: topK, low_confidence: Boolean(lowScoreWarning), best_score: bestScore },
 					};
 				}
 

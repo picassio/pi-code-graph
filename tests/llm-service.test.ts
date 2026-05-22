@@ -168,6 +168,26 @@ describe('validateCypherReadOnly', () => {
     ).not.toThrow();
   });
 
+  it('should reject IN/ANY misuse on scalar string properties before Memgraph errors', () => {
+    const badQueries = [
+      "MATCH (m:Method) WHERE 'create' IN m.name RETURN m.name AS name",
+      "MATCH (m:Method) WHERE ANY(x IN m.local_name WHERE x = 'create') RETURN m.name AS name",
+      "MATCH (n:Function) WHERE 'src/' IN n.file_path RETURN n.name AS name",
+    ];
+    for (const query of badQueries) {
+      expect(() => validateCypherReadOnly(query)).toThrow(LLMGenerationError);
+    }
+  });
+
+  it('should allow IN/ANY on known list properties', () => {
+    expect(() =>
+      validateCypherReadOnly("MATCH (n:Function) WHERE 'task' IN n.decorators RETURN n.name AS name")
+    ).not.toThrow();
+    expect(() =>
+      validateCypherReadOnly("MATCH (n:Function) WHERE ANY(d IN n.decorators WHERE d = 'task') RETURN n.name AS name")
+    ).not.toThrow();
+  });
+
   it('should throw on MERGE queries', () => {
     expect(() =>
       validateCypherReadOnly('MERGE (n:Node {id: 1})')

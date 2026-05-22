@@ -118,6 +118,9 @@ const NODE_SCHEMAS: NodeSchema[] = [
   { label: NodeLabel.ENUM, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path, local_name' },
   { label: NodeLabel.TYPE, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path, local_name' },
   { label: NodeLabel.EXTERNAL_PACKAGE, properties: 'name (unique), version_spec' },
+  { label: NodeLabel.COMMENT, properties: 'qualified_name (unique), name, text, kind, start_line, end_line, project, file_path' },
+  { label: NodeLabel.LITERAL, properties: 'qualified_name (unique), name, text, kind, start_line, end_line, project, file_path' },
+  { label: NodeLabel.BUILTIN, properties: 'qualified_name (unique), name, start_line, end_line, project, file_path' },
 ];
 
 /**
@@ -177,7 +180,8 @@ const CYPHER_QUERY_RULES = `**2. Critical Cypher Query Rules**
 - **Use \`STARTS WITH\` for Paths**: When matching paths, always use \`STARTS WITH\` for robustness (e.g., \`WHERE n.path STARTS WITH 'workflows/src'\`). Do not use \`=\`.
 - **Use \`ENDS WITH\` for qualified_name**: The \`qualified_name\` property contains full paths like \`'Project.folder.subfolder.ClassName'\`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use \`ENDS WITH\` to match: \`WHERE c.qualified_name ENDS WITH '.VatManager'\`. Do NOT use \`{name: 'VatManager'}\` equality matching.
 - **Use \`toLower()\` for Searches**: For case-insensitive searching on string properties, use \`toLower()\`.
-- **Querying Lists**: To check if a list property (like \`decorators\`) contains an item, use the \`ANY\` or \`IN\` clause (e.g., \`WHERE 'flow' IN n.decorators\`).
+- **Querying Lists**: To check if a list property (like \`decorators\`) contains an item, use the \`ANY\` or \`IN\` clause (e.g., \`WHERE 'flow' IN n.decorators\`). Do NOT use \`ANY\`/\`IN\` on scalar string properties like \`name\`, \`local_name\`, \`file_path\`, or \`qualified_name\`; use \`=\`, \`CONTAINS\`, \`STARTS WITH\`, or \`ENDS WITH\` instead.
+- **Comments, string literals, and builtins**: Comment nodes use label \`Comment\` with \`text\` and \`kind\`; string/number literals use label \`Literal\` with \`text\` and \`kind\`; builtin calls like \`console.log\` use label \`Builtin\` with \`name\`.
 - **Prefer file_path / project / local_name for path-based queries**: Class, Function, Method, Interface, Enum, and Type nodes expose \`project\` (project name), \`file_path\` (repo-relative path like \`'src/lib/vector-store.ts'\`), and \`local_name\` (name within the file, e.g. \`'VectorStore.upsert'\`). For queries that filter by file or directory, prefer \`n.file_path STARTS WITH 'src/lib/'\` and \`n.project = $project\` over \`qualified_name\` string patterns. Use \`n.local_name ENDS WITH '.VatManager'\` (or \`= 'VatManager'\`) instead of \`qualified_name ENDS WITH\` when looking up a symbol by its short name.`;
 
 export function buildGraphSchemaAndRules(): string {
@@ -864,6 +868,23 @@ export function validateCypherReadOnly(query: string): void {
         `Dangerous Cypher operation detected: "${keyword}" in query: ${query}`
       );
     }
+  }
+
+  validateNoScalarListOperatorMisuse(sanitized, query);
+}
+
+/**
+ * Catch common LLM mistakes before Memgraph does, so the Cypher generator can
+ * retry instead of surfacing `ANY/IN expected a list, got string` to users.
+ */
+function validateNoScalarListOperatorMisuse(sanitizedQuery: string, originalQuery: string): void {
+  const scalarProps = '(?:name|local_name|file_path|qualified_name|path|text)';
+  const anyOnScalar = new RegExp(`\\bANY\\s*\\([^)]*\\bIN\\s+[A-Za-z_]\\w*\\.${scalarProps}\\b`, 'i');
+  const inScalar = new RegExp(`\\bIN\\s+[A-Za-z_]\\w*\\.${scalarProps}\\b`, 'i');
+  if (anyOnScalar.test(sanitizedQuery) || inScalar.test(sanitizedQuery)) {
+    throw new LLMGenerationError(
+      `Invalid Cypher list operation on scalar string property. Use =, CONTAINS, STARTS WITH, or ENDS WITH instead of IN/ANY. Query: ${originalQuery}`
+    );
   }
 }
 

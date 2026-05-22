@@ -22,12 +22,16 @@ export interface QueryGraphData {
   results: ResultRow[];
   summary: string;
   error?: string;
+  was_truncated?: boolean;
+  total_results?: number;
+  returned_results?: number;
 }
 
 export interface QueryConfig {
   maxResultRows?: number;
   maxTokens?: number;
   verbose?: boolean;
+  projectName?: string;
 }
 
 export interface CodebaseQueryToolConfig {
@@ -98,6 +102,45 @@ function formatSummarySuccess(count: number): string {
   return `Query returned ${count} result(s).`;
 }
 
+/**
+ * Add a conservative project scope to common code-node queries when the LLM
+ * forgot to include one. This avoids leaking results from other indexed projects.
+ */
+export function applyProjectScopeToCypher(query: string, projectName?: string): string {
+  if (!projectName || /\$project\b|\.project\b/i.test(query)) return query;
+
+  const scopedLabels = new Set([
+    'Module', 'Class', 'Function', 'Method', 'Interface', 'Enum', 'Type', 'Comment', 'Literal', 'Builtin',
+  ]);
+  const vars = new Set<string>();
+  const nodePattern = /\(([A-Za-z_]\w*)\s*:\s*([A-Za-z_|]+)\)/g;
+  for (const match of query.matchAll(nodePattern)) {
+    const [, varName, labelsText] = match;
+    if (labelsText.split('|').some((label) => scopedLabels.has(label))) {
+      vars.add(varName);
+    }
+  }
+  if (vars.size === 0) return query;
+
+  const scope = Array.from(vars).map((v) => `${v}.project = $project`).join(' AND ');
+  const trimmed = query.trim().replace(/;$/, '');
+
+  const returnIdx = trimmed.search(/\bRETURN\b/i);
+  if (returnIdx === -1) return query;
+
+  const beforeReturn = trimmed.slice(0, returnIdx);
+  const afterReturn = trimmed.slice(returnIdx);
+  const whereMatch = beforeReturn.match(/\bWHERE\b/i);
+  if (whereMatch && whereMatch.index !== undefined) {
+    const whereIdx = whereMatch.index;
+    const beforeWhere = beforeReturn.slice(0, whereIdx + whereMatch[0].length);
+    const condition = beforeReturn.slice(whereIdx + whereMatch[0].length).trim();
+    return `${beforeWhere} ${scope} AND (${condition})\n${afterReturn};`;
+  }
+
+  return `${beforeReturn}WHERE ${scope}\n${afterReturn};`;
+}
+
 function formatSummaryTruncated(
   kept: number,
   total: number,
@@ -128,6 +171,7 @@ export class CodebaseQueryTool {
   private maxResultRows: number;
   private maxTokens: number;
   private verbose: boolean;
+  private projectName?: string;
 
   constructor(config: CodebaseQueryToolConfig) {
     this.graphService = config.graphService;
@@ -135,6 +179,7 @@ export class CodebaseQueryTool {
     this.maxResultRows = config.config?.maxResultRows ?? DEFAULT_MAX_RESULT_ROWS;
     this.maxTokens = config.config?.maxTokens ?? DEFAULT_MAX_TOKENS;
     this.verbose = config.config?.verbose ?? false;
+    this.projectName = config.config?.projectName;
   }
 
   /**
@@ -151,14 +196,20 @@ export class CodebaseQueryTool {
 
     try {
       // Generate Cypher from natural language
-      cypherQuery = await this.cypherGenerator.generate(naturalLanguageQuery);
+      cypherQuery = applyProjectScopeToCypher(
+        await this.cypherGenerator.generate(naturalLanguageQuery, this.projectName),
+        this.projectName,
+      );
 
       if (this.verbose) {
         logger.info(`[codebase-query] Generated Cypher: ${cypherQuery}`);
       }
 
       // Execute the query
-      const results = await this.graphService.fetchAll(cypherQuery);
+      const results = await this.graphService.fetchAll(
+        cypherQuery,
+        this.projectName ? { project: this.projectName } : {},
+      );
 
       const totalCount = results.length;
 
@@ -201,6 +252,9 @@ export class CodebaseQueryTool {
         query_used: cypherQuery,
         results: truncatedResults,
         summary,
+        was_truncated: wasTruncated || totalCount > truncatedResults.length,
+        total_results: totalCount,
+        returned_results: truncatedResults.length,
       };
     } catch (error) {
       if (error instanceof LLMGenerationError) {
@@ -232,7 +286,11 @@ export class CodebaseQueryTool {
     }
 
     try {
-      const results = await this.graphService.fetchAll(cypherQuery);
+      const scopedQuery = applyProjectScopeToCypher(cypherQuery, this.projectName);
+      const results = await this.graphService.fetchAll(
+        scopedQuery,
+        this.projectName ? { project: this.projectName } : {},
+      );
       const totalCount = results.length;
 
       let cappedResults = results;
@@ -259,9 +317,12 @@ export class CodebaseQueryTool {
       }
 
       return {
-        query_used: cypherQuery,
+        query_used: scopedQuery,
         results: truncatedResults,
         summary,
+        was_truncated: wasTruncated || totalCount > truncatedResults.length,
+        total_results: totalCount,
+        returned_results: truncatedResults.length,
       };
     } catch (error) {
       return {
