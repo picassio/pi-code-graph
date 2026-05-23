@@ -133,6 +133,20 @@ The agent automatically uses the graph tools. You can also query directly:
 3. Cypher executes against **Memgraph**
 4. Results formatted and returned to the agent
 
+#### Optional Ax Runtime Engine
+
+`v0.16.0` adds an opt-in Ax (`@ax-llm/ax`) runtime path for typed LLM programs. It does **not** use Ax built-in provider wrappers. Instead, Ax calls go through `PiAxAIService`, which wraps pi-code-graph's existing `LLMClient` stack so Pi/modelRegistry auth, OAuth/custom headers, and provider behavior remain the single source of truth.
+
+```toml
+[query]
+engine = "legacy" # legacy | ax
+ax_router = true
+ax_repair = true
+ax_max_repair_attempts = 1
+```
+
+Safety rails are unchanged in Ax mode: generated Cypher is still validated as read-only, checked for scalar/list operator mistakes, scoped to the active project, and result-capped before execution.
+
 ### Semantic Search Pipeline
 
 1. User describes what code does (e.g., "handles authentication")
@@ -258,6 +272,12 @@ port = "7687"
 
 [project]
 allow_index = true
+
+[query]
+engine = "legacy"  # or "ax" for the custom PiAxAIService runtime
+ax_router = true
+ax_repair = true
+ax_max_repair_attempts = 1
 ```
 
 ### Docker (Memgraph)

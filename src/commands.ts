@@ -770,6 +770,7 @@ async function showConfigMenu(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 		"🤖 LLM Provider (Cypher/Orchestration)",
 		"🧬 Embedding Model (Semantic Search)",
 		"🗄️ Memgraph Connection",
+		"🧠 Query Engine (Legacy/Ax)",
 		"📁 Project Settings",
 		"📊 Show Current Config",
 		"❌ Cancel",
@@ -788,6 +789,9 @@ async function showConfigMenu(pi: ExtensionAPI, ctx: ExtensionContext): Promise<
 			break;
 		case "🗄️ Memgraph Connection":
 			await configureMemgraph(pi, ctx);
+			break;
+		case "🧠 Query Engine (Legacy/Ax)":
+			await configureQueryEngine(pi, ctx);
 			break;
 		case "📁 Project Settings":
 			await configureProject(pi, ctx);
@@ -1291,6 +1295,50 @@ async function configureMemgraph(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 /**
  * Configure project settings
  */
+async function configureQueryEngine(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const settings = getSettings();
+	const engineChoice = await ctx.ui.select("Query Engine", [
+		`legacy${settings.queryEngine === "legacy" ? " [current]" : ""}`,
+		`ax${settings.queryEngine === "ax" ? " [current]" : ""}`,
+		"← Back",
+	]);
+
+	if (!engineChoice || engineChoice === "← Back") {
+		return showConfigMenu(pi, ctx);
+	}
+
+	const queryEngine = engineChoice.startsWith("ax") ? "ax" : "legacy";
+	let axRouter = settings.axRouter;
+	let axRepair = settings.axRepair;
+	let axMaxRepairAttempts = settings.axMaxRepairAttempts;
+
+	if (queryEngine === "ax") {
+		axRouter = await ctx.ui.confirm(
+			"Enable Ax Router",
+			"Route questions through Ax before choosing graph/semantic/grep-recommended behavior?",
+		);
+		axRepair = await ctx.ui.confirm(
+			"Enable Ax Cypher Repair",
+			"Allow one bounded Ax repair pass when generated Cypher fails validation? Validators still run after repair.",
+		);
+		if (axRepair) {
+			const attempts = await ctx.ui.input("Max Repair Attempts", String(settings.axMaxRepairAttempts || 1));
+			const parsed = Number.parseInt(attempts || "1", 10);
+			axMaxRepairAttempts = Number.isFinite(parsed) && parsed >= 0 ? parsed : 1;
+		} else {
+			axMaxRepairAttempts = 0;
+		}
+	}
+
+	updateSettings({ queryEngine, axRouter, axRepair, axMaxRepairAttempts });
+	saveSettings(ctx);
+
+	ctx.ui.notify(
+		`Query engine: ${queryEngine}\nAx router: ${axRouter ? "Enabled" : "Disabled"}\nAx repair: ${axRepair ? `Enabled (${axMaxRepairAttempts})` : "Disabled"}`,
+		"info",
+	);
+}
+
 async function configureProject(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const settings = getSettings();
 	const defaultName = settings.projectName || basename(ctx.cwd);
@@ -1370,6 +1418,12 @@ async function showCurrentConfig(ctx: ExtensionContext): Promise<void> {
 			lines.push(`  Endpoint:   ${settings.embeddingEndpoint}`);
 		}
 	}
+
+	lines.push("");
+	lines.push("Query Engine:");
+	lines.push(`  Engine:     ${settings.queryEngine}`);
+	lines.push(`  Ax Router:  ${settings.axRouter ? "Enabled" : "Disabled"}`);
+	lines.push(`  Ax Repair:  ${settings.axRepair ? `Enabled (${settings.axMaxRepairAttempts})` : "Disabled"}`);
 
 	lines.push("");
 	lines.push("Memgraph:");

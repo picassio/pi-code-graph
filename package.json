@@ -1,6 +1,6 @@
 {
   "name": "pi-code-graph",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Code Graph RAG extension for pi-coding-agent - query codebase knowledge graphs for intelligent code understanding",
   "type": "module",
   "main": "src/index.ts",
@@ -10,6 +10,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
+    "eval:ax-cypher:legacy": "tsx evals/ax-cypher/run-baseline.ts",
+    "eval:ax-cypher:rg": "tsx evals/ax-cypher/run-rg.ts",
+    "eval:ax-cypher": "tsx evals/ax-cypher/run-ax.ts",
     "clean": "rm -rf node_modules"
   },
   "pi": {
@@ -47,6 +50,7 @@
     "LICENSE"
   ],
   "dependencies": {
+    "@ax-llm/ax": "^21.0.12",
     "@iarna/toml": "^2.2.5",
     "@vscode/tree-sitter-wasm": "^0.3.0",
     "@zvec/zvec": "^0.2.3",
@@ -55,9 +59,10 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.3",
-    "typebox": "^1.1.38",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "tsx": "^4.22.3",
+    "typebox": "^1.1.38",
     "typescript": "^5.4.0",
     "vitest": "^4.1.2"
   },

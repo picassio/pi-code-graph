@@ -54,7 +54,7 @@ import {
 } from './dependency-analyzer.js';
 
 import { MemgraphService } from '../graph-service.js';
-import { CypherGenerator } from '../llm-service.js';
+import type { CypherGeneratorLike } from '../llm-service.js';
 import { SemanticSearchService } from '../embeddings.js';
 
 // =============================================================================
@@ -132,7 +132,7 @@ export interface ToolsConfig {
   projectRoot: string;
   projectName: string;
   graphService: MemgraphService;
-  cypherGenerator?: CypherGenerator;
+  cypherGenerator?: CypherGeneratorLike;
   semanticSearchService?: SemanticSearchService;
   queryConfig?: {
     maxResultRows?: number;

@@ -21,6 +21,6 @@
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "tests/**/*", "evals/**/*"],
   "exclude": ["node_modules", "dist"]
 }

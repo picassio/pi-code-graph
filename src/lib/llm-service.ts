@@ -473,7 +473,7 @@ export function resolveApiKey(provider: LLMProvider, explicitKey?: string): stri
 /**
  * Base class for LLM clients
  */
-abstract class LLMClient {
+export abstract class LLMClient {
   protected config: LLMConfig;
 
   constructor(config: LLMConfig) {
@@ -740,7 +740,7 @@ class GoogleClient extends LLMClient {
 /**
  * Create LLM client based on provider
  */
-function createLLMClient(config: LLMConfig): LLMClient {
+export function createLLMClient(config: LLMConfig): LLMClient {
   switch (config.provider) {
     case 'openai':
     case 'openrouter':
@@ -892,6 +892,20 @@ function validateNoScalarListOperatorMisuse(sanitizedQuery: string, originalQuer
 // CypherGenerator Class
 // =============================================================================
 
+export interface CypherGenerationMetadata {
+  engine: 'legacy' | 'ax';
+  confidence?: number;
+  resultShape?: string;
+  caveats?: string;
+  repairAttempted?: boolean;
+  repairAttempts?: number;
+}
+
+export interface CypherGeneratorLike {
+  generate(naturalLanguageQuery: string, projectName?: string): Promise<string>;
+  getLastGenerationMetadata?(): CypherGenerationMetadata | undefined;
+}
+
 export interface CypherGeneratorConfig {
   provider?: LLMProvider;
   model?: string;
@@ -907,10 +921,11 @@ export interface CypherGeneratorConfig {
 /**
  * CypherGenerator class - converts natural language to Cypher queries
  */
-export class CypherGenerator {
+export class CypherGenerator implements CypherGeneratorLike {
   private client: LLMClient;
   private systemPrompt: string;
   private maxRetries: number;
+  private lastMetadata: CypherGenerationMetadata = { engine: 'legacy' };
 
   constructor(config: CypherGeneratorConfig = {}) {
     const provider = config.provider || 'openrouter';
@@ -984,6 +999,7 @@ export class CypherGenerator {
 
         const query = cleanCypherResponse(response.content);
         validateCypherReadOnly(query);
+        this.lastMetadata = { engine: 'legacy', repairAttempted: false, repairAttempts: 0 };
 
         return query;
       } catch (error) {
@@ -998,6 +1014,10 @@ export class CypherGenerator {
     throw new LLMGenerationError(
       `Failed to generate Cypher query after ${this.maxRetries} attempts: ${lastError?.message}`
     );
+  }
+
+  getLastGenerationMetadata(): CypherGenerationMetadata {
+    return this.lastMetadata;
   }
 
   /**
