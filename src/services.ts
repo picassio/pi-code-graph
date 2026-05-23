@@ -15,12 +15,17 @@ import {
 	type MemgraphConfig,
 } from "./lib/graph-service.js";
 import {
-	CypherGenerator,
 	createCypherGenerator,
+	createLLMClient,
 	getBestAvailableProvider,
 	type LLMProvider,
+	type LLMConfig,
 	type CypherGeneratorConfig,
+	type CypherGeneratorLike,
 } from "./lib/llm-service.js";
+import { createAxCypherGenerator } from "./lib/ax/cypher-generator.js";
+import { PiAxAIService } from "./lib/ax/pi-ax-ai-service.js";
+import { AxQueryRouter } from "./lib/ax/query-router.js";
 import {
 	EmbeddingService,
 	SemanticSearchService,
@@ -71,7 +76,8 @@ export class ServiceManager {
 	private static instance: ServiceManager | null = null;
 	
 	private memgraphService: MemgraphService | null = null;
-	private cypherGenerator: CypherGenerator | null = null;
+	private cypherGenerator: CypherGeneratorLike | null = null;
+	private axQueryRouter: AxQueryRouter | null = null;
 	private embeddingService: EmbeddingService | null = null;
 	private semanticSearchService: SemanticSearchService | null = null;
 	private toolCollection: ToolCollection | null = null;
@@ -128,7 +134,19 @@ export class ServiceManager {
 		// Initialize CypherGenerator based on settings
 		const cypherConfig = await this.buildCypherConfig(ctx);
 		if (cypherConfig) {
-			this.cypherGenerator = createCypherGenerator(cypherConfig);
+			if (settings.queryEngine === "ax") {
+				const axLlmConfig = this.toLLMConfig(cypherConfig);
+				const axAi = new PiAxAIService(axLlmConfig, createLLMClient(axLlmConfig));
+				this.cypherGenerator = createAxCypherGenerator({
+					...cypherConfig,
+					ai: axAi,
+					maxRepairAttempts: settings.axRepair ? settings.axMaxRepairAttempts : 0,
+				});
+				this.axQueryRouter = settings.axRouter ? new AxQueryRouter(axAi) : null;
+			} else {
+				this.cypherGenerator = createCypherGenerator(cypherConfig);
+				this.axQueryRouter = null;
+			}
 		}
 		
 		// Initialize EmbeddingService and SemanticSearchService based on settings
@@ -189,11 +207,21 @@ export class ServiceManager {
 	/**
 	 * Get or create the CypherGenerator
 	 */
-	async getCypherGenerator(): Promise<CypherGenerator | null> {
+	async getCypherGenerator(): Promise<CypherGeneratorLike | null> {
 		if (!this.initialized) {
 			await this.initialize();
 		}
 		return this.cypherGenerator;
+	}
+
+	/**
+	 * Get the Ax query router when Ax engine/router are enabled.
+	 */
+	async getAxQueryRouter(): Promise<AxQueryRouter | null> {
+		if (!this.initialized) {
+			await this.initialize();
+		}
+		return this.axQueryRouter;
 	}
 	
 	/**
@@ -334,6 +362,7 @@ export class ServiceManager {
 			this.memgraphService = null;
 		}
 		this.cypherGenerator = null;
+		this.axQueryRouter = null;
 		this.embeddingService = null;
 		if (this.semanticSearchService) {
 			await this.semanticSearchService.close();
@@ -347,6 +376,34 @@ export class ServiceManager {
 	// Private Helpers
 	// ─────────────────────────────────────────────────────────────────────────────
 	
+	/**
+	 * Normalize partial CypherGenerator config into the concrete LLMConfig needed
+	 * by PiAxAIService. This intentionally mirrors CypherGenerator defaults rather
+	 * than using Ax built-in provider defaults.
+	 */
+	private toLLMConfig(config: CypherGeneratorConfig): LLMConfig {
+		const provider = config.provider || "openrouter";
+		const model = config.model || (() => {
+			switch (provider) {
+				case "openai": return "gpt-4o-mini";
+				case "anthropic": return "claude-3-5-sonnet-20241022";
+				case "google": return "gemini-1.5-flash";
+				case "openrouter": return "anthropic/claude-3.5-sonnet";
+				case "ollama": return "llama3.2";
+			}
+		})();
+
+		return {
+			provider,
+			model,
+			apiKey: config.apiKey,
+			endpoint: config.endpoint,
+			headers: config.headers,
+			temperature: config.temperature,
+			maxTokens: config.maxTokens,
+		};
+	}
+
 	/**
 	 * Build CypherGenerator configuration from settings
 	 */

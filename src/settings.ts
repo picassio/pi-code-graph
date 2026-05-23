@@ -20,6 +20,12 @@ const CGR_CONFIG_FILE = join(CGR_CONFIG_DIR, "config.toml");
  * Runtime settings (can be changed via /cgr-config)
  */
 export interface CGRSettings {
+	// Query generation engine
+	queryEngine: "legacy" | "ax";
+	axRouter: boolean;
+	axRepair: boolean;
+	axMaxRepairAttempts: number;
+
 	// LLM Configuration (for Cypher generation & orchestration)
 	llmSource: "auto" | "manual" | "ollama";
 	autoProvider?: "google" | "openai" | "anthropic" | "openrouter";  // Preferred provider in auto mode
@@ -53,6 +59,12 @@ export interface CGRSettings {
  * Default settings
  */
 const DEFAULT_SETTINGS: CGRSettings = {
+	// Query defaults
+	queryEngine: "legacy",
+	axRouter: true,
+	axRepair: true,
+	axMaxRepairAttempts: 1,
+
 	// LLM defaults
 	llmSource: "auto",
 	ollamaEndpoint: "http://localhost:11434/v1",
@@ -110,6 +122,14 @@ export function loadFromEnvironment(): void {
 	}
 	if (process.env.MEMGRAPH_PORT) {
 		currentSettings.memgraphPort = process.env.MEMGRAPH_PORT;
+	}
+	if (process.env.CGR_QUERY_ENGINE === "legacy" || process.env.CGR_QUERY_ENGINE === "ax") {
+		currentSettings.queryEngine = process.env.CGR_QUERY_ENGINE;
+	}
+	if (process.env.CGR_AX_ROUTER === "true") {
+		currentSettings.axRouter = true;
+	} else if (process.env.CGR_AX_ROUTER === "false") {
+		currentSettings.axRouter = false;
 	}
 
 	// LLM source detection
@@ -172,6 +192,12 @@ interface TOMLConfig {
 		name?: string;
 		allow_index?: boolean;
 	};
+	query?: {
+		engine?: string;
+		ax_router?: boolean;
+		ax_repair?: boolean;
+		ax_max_repair_attempts?: number;
+	};
 
 }
 
@@ -199,6 +225,12 @@ export function saveSettingsToFile(): { success: boolean; error?: string } {
 			},
 			project: {
 				allow_index: currentSettings.allowIndex,
+			},
+			query: {
+				engine: currentSettings.queryEngine,
+				ax_router: currentSettings.axRouter,
+				ax_repair: currentSettings.axRepair,
+				ax_max_repair_attempts: currentSettings.axMaxRepairAttempts,
 			},
 
 		};
@@ -319,6 +351,22 @@ export function loadSettingsFromFile(): { success: boolean; error?: string } {
 			}
 			if (config.embedding.endpoint) {
 				currentSettings.embeddingEndpoint = config.embedding.endpoint;
+			}
+		}
+
+		// Apply query settings
+		if (config.query) {
+			if (config.query.engine === "legacy" || config.query.engine === "ax") {
+				currentSettings.queryEngine = config.query.engine;
+			}
+			if (config.query.ax_router !== undefined) {
+				currentSettings.axRouter = config.query.ax_router;
+			}
+			if (config.query.ax_repair !== undefined) {
+				currentSettings.axRepair = config.query.ax_repair;
+			}
+			if (typeof config.query.ax_max_repair_attempts === "number") {
+				currentSettings.axMaxRepairAttempts = config.query.ax_max_repair_attempts;
 			}
 		}
 

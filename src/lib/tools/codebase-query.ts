@@ -9,6 +9,8 @@ import {
   CypherGenerator,
   LLMGenerationError,
   CypherGeneratorConfig,
+  type CypherGenerationMetadata,
+  type CypherGeneratorLike,
 } from '../llm-service.js';
 import { ResultRow } from '../types.js';
 import { CYPHER_DEFAULT_LIMIT } from '../constants.js';
@@ -25,6 +27,7 @@ export interface QueryGraphData {
   was_truncated?: boolean;
   total_results?: number;
   returned_results?: number;
+  generation_metadata?: CypherGenerationMetadata;
 }
 
 export interface QueryConfig {
@@ -36,7 +39,7 @@ export interface QueryConfig {
 
 export interface CodebaseQueryToolConfig {
   graphService: MemgraphService;
-  cypherGenerator: CypherGenerator;
+  cypherGenerator: CypherGeneratorLike;
   config?: QueryConfig;
 }
 
@@ -167,7 +170,7 @@ function formatSummaryDbError(error: string): string {
  */
 export class CodebaseQueryTool {
   private graphService: MemgraphService;
-  private cypherGenerator: CypherGenerator;
+  private cypherGenerator: CypherGeneratorLike;
   private maxResultRows: number;
   private maxTokens: number;
   private verbose: boolean;
@@ -200,6 +203,7 @@ export class CodebaseQueryTool {
         await this.cypherGenerator.generate(naturalLanguageQuery, this.projectName),
         this.projectName,
       );
+      const generationMetadata = this.cypherGenerator.getLastGenerationMetadata?.();
 
       if (this.verbose) {
         logger.info(`[codebase-query] Generated Cypher: ${cypherQuery}`);
@@ -255,6 +259,7 @@ export class CodebaseQueryTool {
         was_truncated: wasTruncated || totalCount > truncatedResults.length,
         total_results: totalCount,
         returned_results: truncatedResults.length,
+        generation_metadata: generationMetadata,
       };
     } catch (error) {
       if (error instanceof LLMGenerationError) {
@@ -418,7 +423,7 @@ export const CODEBASE_QUERY_TOOL_SCHEMA = {
  */
 export function createCodebaseQueryTool(
   graphService: MemgraphService,
-  cypherGenerator: CypherGenerator,
+  cypherGenerator: CypherGeneratorLike,
   config?: QueryConfig
 ): CodebaseQueryTool {
   return new CodebaseQueryTool({

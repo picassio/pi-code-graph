@@ -55,6 +55,10 @@ export {
   FunctionRegistryTrieImpl,
 } from './parsers/index.js';
 
+// Export Ax runtime integration
+export * as axRuntime from './ax/index.js';
+export * from './ax/index.js';
+
 // Export RAG tools
 export * as tools from './tools/index.js';
 export { ToolName, ToolCollection, createAllTools, createMCPToolHandler } from './tools/index.js';

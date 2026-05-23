@@ -152,9 +152,71 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 
 			try {
 				const tools = await manager.getToolCollection();
+				const settings = getSettings();
+				const engine = settings.queryEngine;
+				const axRouter = settings.queryEngine === "ax" && settings.axRouter
+					? await manager.getAxQueryRouter()
+					: null;
+				const routing = axRouter ? await axRouter.route(params.query) : null;
 				
 				if (signal?.aborted) {
 					return { content: [{ type: "text", text: "Query cancelled" }], details: {} };
+				}
+
+				if (routing?.route === "grep_recommended") {
+					return {
+						content: [{ type: "text", text: `This looks like an exhaustive raw text search. Use ripgrep/grep for best recall and speed. Reason: ${routing.reason}` }],
+						details: { query: params.query, engine, ax_route: routing },
+					};
+				}
+
+				if (routing?.route === "unsupported") {
+					return {
+						content: [{ type: "text", text: `I don't have a safe code-graph route for this query. Reason: ${routing.reason}` }],
+						details: { query: params.query, engine, ax_route: routing },
+					};
+				}
+
+				if (routing?.route === "semantic" && tools.semanticSearch) {
+					const semanticResults = await tools.semanticSearch.search(params.query, 10);
+					if (semanticResults.length > 0) {
+						const items = toResultItems(semanticResults);
+						return {
+							content: [{ type: "text", text: formatResults(items, params.query) }],
+							details: { results: items, query: params.query, engine, ax_route: routing, routed_to: "semantic_code_search" },
+						};
+					}
+				}
+
+				if (routing?.route === "dependency" && routing.targetSymbol) {
+					const depAnalysisResult = await tools.dependencyAnalyzer.analyzeDependencies(
+						routing.targetSymbol,
+						routing.depth ?? 1,
+					);
+					if (depAnalysisResult) {
+						const depResult: DependencyResult = { target: routing.targetSymbol };
+						const direction = routing.direction ?? "both";
+						if ((direction === "dependents" || direction === "both") && depAnalysisResult.callers?.length) {
+							depResult.dependents = toResultItems(depAnalysisResult.callers);
+						}
+						if ((direction === "dependencies" || direction === "both") && depAnalysisResult.callees?.length) {
+							depResult.dependencies = toResultItems(depAnalysisResult.callees);
+						}
+						return {
+							content: [{ type: "text", text: formatDependencies(depResult, routing.targetSymbol) }],
+							details: {
+								target: routing.targetSymbol,
+								direction,
+								depth: routing.depth ?? 1,
+								callers_count: depAnalysisResult.callers?.length || 0,
+								callees_count: depAnalysisResult.callees?.length || 0,
+								query: params.query,
+								engine,
+								ax_route: routing,
+								routed_to: "analyze_code_dependencies",
+							},
+						};
+					}
 				}
 				
 				const result = await tools.codebaseQuery.queryCodebaseKnowledgeGraph(params.query);
@@ -178,6 +240,11 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 							was_truncated: result.was_truncated,
 							total_results: result.total_results,
 							returned_results: result.returned_results,
+							engine: result.generation_metadata?.engine ?? engine,
+							repair_attempted: result.generation_metadata?.repairAttempted,
+							repair_attempts: result.generation_metadata?.repairAttempts,
+							generation_metadata: result.generation_metadata,
+							ax_route: routing,
 						},
 					};
 				}
@@ -189,6 +256,11 @@ export function registerQueryTools(pi: ExtensionAPI): void {
 					details: { 
 						query: params.query,
 						cypher_query: result.query_used,
+						engine: result.generation_metadata?.engine ?? engine,
+						repair_attempted: result.generation_metadata?.repairAttempted,
+						repair_attempts: result.generation_metadata?.repairAttempts,
+						generation_metadata: result.generation_metadata,
+						ax_route: routing,
 					},
 				};
 			} catch (err) {
