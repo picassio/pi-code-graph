@@ -24,9 +24,10 @@
     ]
   },
   "keywords": [
+    "pi-package",
+    "pi-extension",
     "pi",
     "pi-coding-agent",
-    "extension",
     "code-graph-rag",
     "rag",
     "knowledge-graph",
@@ -76,5 +77,9 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
   }
 }
